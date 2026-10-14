@@ -1,0 +1,9 @@
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.DS_Store
+backups/
+semainier-da/
+.claude/
+design/
