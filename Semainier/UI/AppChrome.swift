@@ -122,19 +122,23 @@ struct TargetsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
                     LabeledContent("Kcal") {
-                        Text(Fmt.n0(kcal)).font(.body.bold()).monospacedDigit()
+                        Text(Fmt.n0(kcal)).font(.body.weight(.semibold).width(.expanded)).monospacedDigit()
                             .contentTransition(.numericText(value: kcal))
                             .animation(.snappy, value: kcal)
                     }
-                    NumberField(label: "Glucides (g)", text: $c, color: Theme.carb)
-                    NumberField(label: "Protéines (g)", text: $p, color: Theme.prot)
-                    NumberField(label: "Lipides (g)", text: $f, color: Theme.fat)
+                    NumberField(label: "Glucides", text: $c, color: Theme.carb, unit: "g")
+                    NumberField(label: "Protéines", text: $p, color: Theme.prot, unit: "g")
+                    NumberField(label: "Lipides", text: $f, color: Theme.fat, unit: "g")
                 } footer: {
                     Text(hint)
                 }
+                }
+                .listRowBackground(Theme.surface)
             }
+            .paperList()
             .navigationTitle("Mes objectifs")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -170,21 +174,30 @@ struct TargetsSheet: View {
     }
 }
 
-/// Ligne de formulaire avec un champ numérique aligné à droite.
+/// Ligne de formulaire : libellé (avec pastille de couleur pour une macro), valeur en Expanded, unité.
 struct NumberField: View {
     var label: String
     @Binding var text: String
     var color: Color = .primary
     var placeholder = "0"
+    var unit: String? = nil
 
     var body: some View {
         LabeledContent {
-            TextField(placeholder, text: $text)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .monospacedDigit()
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                TextField(placeholder, text: $text)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .font(.body.weight(.semibold).width(.expanded))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+                if let unit { Text(unit).foregroundStyle(Theme.muted) }
+            }
         } label: {
-            Text(label).foregroundStyle(color)
+            HStack(spacing: 8) {
+                if color != .primary { Circle().fill(color).frame(width: 8, height: 8) }
+                Text(label).foregroundStyle(Theme.ink)
+            }
         }
     }
 }

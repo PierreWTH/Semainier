@@ -50,6 +50,9 @@ struct ShoppingView: View {
             List {
                 Section {
                     dayPicker
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .padding(.horizontal, 1)
                 } footer: {
                     Text("Total des ingrédients pour les jours choisis, portions ajustées comprises.")
                 }
@@ -60,24 +63,41 @@ struct ShoppingView: View {
                         .listRowBackground(Color.clear)
                 } else {
                     Section {
-                        HStack {
-                            Text("\(Text("\(done)").bold()) / \(all.count) dans le panier").monospacedDigit()
-                            Spacer()
+                        // Panier en « étiquette » : filet, compteur en Expanded, jauge.
+                        VStack(alignment: .leading, spacing: 10) {
+                            LabelRule()
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("\(done) / \(all.count)").heroNumber(30).foregroundStyle(Theme.ink)
+                                Text("dans le panier").foregroundStyle(Theme.muted)
+                                Spacer()
+                                Text("\(settings.shopDays.count) jour\(settings.shopDays.count > 1 ? "s" : "")").sectionLabel()
+                            }
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                            ProgressBar(fraction: all.isEmpty ? 0 : Double(done) / Double(all.count), color: Theme.ok, height: 4)
+                                .animation(.snappy, value: done)
+                        }
+                        .padding(.vertical, 6)
+                        .listRowBackground(Theme.surface)
+                    } footer: {
+                        if done > 0 {
                             Button("Tout décocher") { withAnimation { settings.checked = [] } }
-                                .buttonStyle(.borderless)
-                                .disabled(done == 0)
+                                .font(.label).textCase(.uppercase).kerning(0.8).foregroundStyle(Theme.accent)
                         }
                     }
                     ForEach(Rayon.allCases) { rayon in
                         let items = all.filter { $0.ingredient.rayon == rayon }
                         if !items.isEmpty {
-                            Section(rayon.rawValue) {
-                                ForEach(sorted(items)) { row($0) }
+                            Section {
+                                ForEach(sorted(items)) { row($0).listRowBackground(Theme.surface) }
+                            } header: {
+                                ListHeader(title: rayon.rawValue,
+                                           trailing: "\(items.filter { isChecked($0.ingredient) }.count) / \(items.count)")
                             }
                         }
                     }
                 }
             }
+            .paperList()
             .navigationTitle("Courses")
             .appChrome {
                 Button("Copier la liste", systemImage: "doc.on.doc") {
@@ -101,15 +121,16 @@ struct ShoppingView: View {
                     if on { s.remove(d) } else { s.insert(d) }
                     settings.shopDays = s.sorted()
                 } label: {
-                    VStack(spacing: 0) {
-                        Text(Days.shortWeekday(key))
-                        Text(Days.dayNumber(key)).font(.caption2).monospacedDigit()
+                    VStack(spacing: 2) {
+                        Text(Days.shortWeekday(key)).font(.system(size: 9, weight: .medium).monospaced())
+                            .textCase(.uppercase).kerning(0.6)
+                        Text(Days.dayNumber(key)).font(.title3.weight(.bold).width(.expanded)).monospacedDigit()
                     }
-                    .font(.footnote.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 40)
-                    .foregroundStyle(on ? Theme.accent : .primary)
-                    .background(on ? Theme.accentSoft : Theme.surface2.opacity(0.5), in: .rect(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(on ? Theme.accent : Theme.line))
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(on ? Theme.accent : Theme.muted)
+                    .background(on ? Theme.accentSoft : Color.clear, in: .rect(cornerRadius: Theme.Radius.cell))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.cell).strokeBorder(on ? Theme.accent : Theme.line))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Days.longLabel(key))
@@ -118,6 +139,7 @@ struct ShoppingView: View {
         }
     }
 
+
     private func row(_ l: Line) -> some View {
         let on = isChecked(l.ingredient)
         return Button {
@@ -125,19 +147,20 @@ struct ShoppingView: View {
                 if on { settings.checked.removeAll { $0 == l.ingredient.uid } } else { settings.checked.append(l.ingredient.uid) }
             }
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(on ? Theme.accent : Theme.muted)
+            // Lu au rayon : texte 17 pt, quantités en Expanded, cases de 28 pt, cochés barrés.
+            HStack(spacing: 14) {
+                CheckCircle(on: on)
                 Text(l.ingredient.name)
+                    .font(.body)
                     .strikethrough(on)
-                    .foregroundStyle(on ? Theme.muted : .primary)
+                    .foregroundStyle(on ? Theme.muted : Theme.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(l.text)
-                    .fontWeight(on ? .regular : .bold)
-                    .foregroundStyle(on ? Theme.muted : .primary)
+                    .font(.body.weight(on ? .regular : .bold).width(.expanded))
+                    .foregroundStyle(on ? Theme.muted : Theme.ink)
                     .monospacedDigit()
             }
+            .padding(.vertical, 4)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)

@@ -65,7 +65,7 @@ struct WeekView: View {
         let onTarget = totals.filter { Nutrition.status(kcal: $0.kcal, target: target) == .ok }.count
 
         VStack(alignment: .leading, spacing: 16) {
-            stats(avg, onTarget, filled.isEmpty)
+            stats(avg, onTarget, filled.isEmpty, totals: totals)
 
             grid()
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -77,16 +77,31 @@ struct WeekView: View {
         .sheet(item: $viewingIngredient) { IngredientEditor(target: $0) }
     }
 
-    private func stats(_ avg: Double, _ onTarget: Int, _ empty: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(empty ? "—" : Fmt.n0(avg)).font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("kcal / jour en moyenne").foregroundStyle(Theme.muted)
+    /// Moyenne en chiffre héros, ouverte par le filet ; à droite, un point par jour (couleur de sa jauge).
+    private func stats(_ avg: Double, _ onTarget: Int, _ empty: Bool, totals: [Macros]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LabelRule()
+            HStack(alignment: .bottom) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(empty ? "—" : Fmt.n0(avg)).heroNumber(44).foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Text("kcal / jour\nen moyenne").font(.footnote).foregroundStyle(Theme.muted)
+                        .fixedSize()
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 4) {
+                        ForEach(Array(totals.prefix(14).enumerated()), id: \.offset) { _, t in
+                            let c = Theme.gauge(kcal: t.kcal, target: settings.targetKcal)
+                            Circle().fill(c == Theme.ink ? Theme.muted : c).frame(width: 7, height: 7)
+                        }
+                    }
+                    Text("\(onTarget)/\(days.count) dans la cible ±3 %").sectionLabel()
+                        .lineLimit(1).fixedSize()
+                }
             }
-            Text("\(onTarget) / \(days.count) jours dans la cible (±3 %) · objectif \(Fmt.n0(settings.targetKcal)) kcal")
-                .font(.footnote).foregroundStyle(Theme.muted)
         }
-        .monospacedDigit()
+        .accessibilityElement(children: .combine)
     }
 
     private func grid() -> some View {
@@ -216,7 +231,8 @@ struct WeekView: View {
     }
 
     private func slotLabel(_ s: String) -> some View {
-        Text(s).font(.caption.weight(.bold)).foregroundStyle(Theme.muted)
+        Text(s).font(.system(size: 9, weight: .medium).monospaced()).textCase(.uppercase).kerning(0.5)
+            .foregroundStyle(Theme.muted)
             .lineLimit(2).minimumScaleFactor(0.8)
     }
 
@@ -234,17 +250,17 @@ struct WeekView: View {
     }
 
     private func dayBackground(_ d: DayKey) -> Color {
-        d == today ? Theme.accent.opacity(0.06) : d < today ? Theme.surface2.opacity(0.35) : .clear
+        d == today ? Theme.accentWash : d < today ? Theme.surface2.opacity(0.35) : .clear
     }
 
     private func header(_ d: DayKey) -> some View {
         Button { openDay(d) } label: {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Days.shortWeekday(d)).bold()
-                    .foregroundStyle(d < today ? Theme.muted : .primary)
+                Text(Days.shortWeekday(d)).font(.headline)
+                    .foregroundStyle(d < today ? Theme.muted : Theme.ink)
                 Text(Days.dayNumber(d))
-                    .font(.footnote.weight(d == today ? .bold : .regular)).monospacedDigit()
-                    .foregroundStyle(d == today ? Color(uiColor: .systemBackground) : Theme.muted)
+                    .font(.footnote.weight(.semibold).width(.expanded)).monospacedDigit()
+                    .foregroundStyle(d == today ? Theme.onAccent : Theme.muted)
                     .padding(.horizontal, d == today ? 7 : 0).padding(.vertical, 1)
                     .background(d == today ? Theme.accent : .clear, in: .capsule)
             }
@@ -268,15 +284,8 @@ struct WeekView: View {
             ForEach(entries.on(d).filter { $0.slot == s }) { e in
                 if e.isValid {
                     Button { openDay(d) } label: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(e.title).font(.footnote.weight(.semibold)).lineLimit(2).multilineTextAlignment(.leading)
-                            Text(chipDetail(e))
-                                .font(.caption2).foregroundStyle(Theme.muted).monospacedDigit()
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.surface2, in: .rect(cornerRadius: 8))
-                        .contentShape(.contextMenuPreview, .rect(cornerRadius: 8))
+                        chipContent(e)
+                            .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.Radius.cell))
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("entry-\(e.title)")
@@ -355,38 +364,56 @@ struct WeekView: View {
         }
     }
 
+    /// Case pleine : nom sur deux lignes, kcal en Expanded, portion en pastille, micro-barre G · P · L.
+    private func chipContent(_ e: PlanEntry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(e.title).font(.footnote.weight(.semibold)).foregroundStyle(Theme.ink)
+                .lineLimit(2).multilineTextAlignment(.leading)
+            HStack(spacing: 4) {
+                Text(Fmt.n0(e.totals.kcal)).font(.caption.weight(.semibold).width(.expanded)).monospacedDigit()
+                    .foregroundStyle(Theme.muted)
+                Spacer(minLength: 0)
+                if let g = e.ingredient {
+                    tag(Fmt.cook(e.qty * e.x, unit: g.unit))
+                } else if e.x != 1 {
+                    tag(Fmt.x(e.x))
+                }
+            }
+            MacroSplit(m: e.totals, height: 3).padding(.top, 2)
+        }
+        .padding(.horizontal, 8).padding(.top, 7).padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface2, in: .rect(cornerRadius: Theme.Radius.cell))
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text).font(.system(size: 9, weight: .medium).monospaced()).foregroundStyle(Theme.accent)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(Theme.accentSoft, in: .capsule)
+    }
+
     /// Aperçu du plat pendant le glisser.
     private func chipPreview(_ e: PlanEntry) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(e.title).font(.footnote.weight(.semibold)).lineLimit(2)
-            Text(chipDetail(e)).font(.caption2).foregroundStyle(Theme.muted).monospacedDigit()
-        }
-        .padding(.horizontal, 8).padding(.vertical, 6)
-        .frame(width: colWidth - 12, alignment: .leading)
-        .background(Theme.surface2, in: .rect(cornerRadius: 8))
+        chipContent(e).frame(width: colWidth - 12)
     }
 
-    /// « 636 kcal », « 636 kcal · ×1,2 », ou « 150 g · 165 kcal » pour un ingrédient seul.
-    private func chipDetail(_ e: PlanEntry) -> String {
-        let kcal = "\(Fmt.n0(e.totals.kcal)) kcal"
-        if let g = e.ingredient { return Fmt.cook(e.qty * e.x, unit: g.unit) + " · " + kcal }
-        return kcal + (e.x != 1 ? " · " + Fmt.x(e.x) : "")
-    }
-
+    /// Total du jour en Expanded, souligné de sa jauge (encre, vert dans ±3 %, brique au-delà).
     private func foot(_ d: DayKey, _ t: Macros) -> some View {
-        let st = Nutrition.status(kcal: t.kcal, target: settings.targetKcal)
+        let target = settings.targetKcal
+        let c = Theme.gauge(kcal: t.kcal, target: target)
         return Button { openDay(d) } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Circle().fill(st == .none ? Theme.surface2 : Theme.color(st)).frame(width: 8, height: 8)
-                    Text(t.kcal > 0 ? Fmt.n0(t.kcal) : "—").font(.system(.body, design: .rounded).bold())
-                }
-                Text(t.kcal > 0 ? Fmt.diff(t.kcal, target: settings.targetKcal) : "vide")
-                    .font(.caption.weight(.semibold)).foregroundStyle(Theme.color(st))
-                MacroLine(m: t).font(.caption2).foregroundStyle(Theme.muted)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(t.kcal > 0 ? Fmt.n0(t.kcal) : "—")
+                    .font(.callout.weight(.bold).width(.expanded)).monospacedDigit()
+                    .foregroundStyle(c == Theme.over ? Theme.over : Theme.ink)
+                Capsule().fill(Theme.surface2).frame(height: 3)
+                    .overlay(alignment: .leading) {
+                        GeometryReader { g in
+                            Capsule().fill(c).frame(width: g.size.width * min(target > 0 ? t.kcal / target : 0, 1))
+                        }
+                    }
             }
-            .monospacedDigit()
-            .padding(8)
+            .padding(.horizontal, 8).padding(.vertical, 10)
             .frame(width: colWidth, alignment: .leading)
             .frame(maxHeight: .infinity, alignment: .top)
             .contentShape(.rect)
@@ -394,7 +421,9 @@ struct WeekView: View {
         .buttonStyle(.plain)
         .background(dayBackground(d))
         .background(Theme.surface)
+        .accessibilityLabel("\(Days.longLabel(d)) : \(Fmt.n0(t.kcal)) kcal")
     }
+
 }
 
 /// Position horizontale de la grille et distance tirée au-delà de chaque bord.

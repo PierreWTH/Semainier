@@ -8,6 +8,7 @@ struct SemainierApp: App {
     @State private var toast = Toast()
 
     init() {
+        Appearance.apply()
         let schema = Schema([Ingredient.self, Recipe.self, RecipeItem.self, PlanEntry.self, AppSettings.self])
         // Stockage local uniquement (compte gratuit). Pour la sync iCloud : cloudKitDatabase: .automatic.
         var config = ModelConfiguration(schema: schema, cloudKitDatabase: .none)

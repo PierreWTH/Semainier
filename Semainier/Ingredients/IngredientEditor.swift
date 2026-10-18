@@ -133,15 +133,18 @@ struct IngredientEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let note = target.note {
                     Section { Label(note, systemImage: "barcode.viewfinder").font(.subheadline) }
                 }
                 if let scan = target.scan, target.ingredient == nil {
                     scanSection(scan)
                 }
-                Section("Nom") {
+                Section {
                     TextField("Ex. Flocons d'avoine", text: $d.name)
                         .focused($nameFocused)
+                } header: {
+                    ListHeader(title: "Nom")
                 }
                 Section {
                     Picker("Valeurs données", selection: Binding(get: { d.unit }, set: { d.setUnit($0) })) {
@@ -152,21 +155,21 @@ struct IngredientEditor: View {
                     if d.unit == .pc {
                         NumberField(label: "Poids d'une pièce",
                                     text: Binding(get: { d.pieceWeight }, set: { d.setPieceWeight($0) }),
-                                    placeholder: "ex. 300")
+                                    placeholder: "ex. 300", unit: "g")
                     }
                     NumberField(label: "Kcal", text: manual(\.kcal), placeholder: kcalPlaceholder)
-                    NumberField(label: "Glucides (g)", text: manual(\.c), color: Theme.carb)
-                    NumberField(label: "Protéines (g)", text: manual(\.p), color: Theme.prot)
-                    NumberField(label: "Lipides (g)", text: manual(\.f), color: Theme.fat)
+                    NumberField(label: "Glucides", text: manual(\.c), color: Theme.carb, unit: "g")
+                    NumberField(label: "Protéines", text: manual(\.p), color: Theme.prot, unit: "g")
+                    NumberField(label: "Lipides", text: manual(\.f), color: Theme.fat, unit: "g")
                 } header: {
-                    Text("Valeurs nutritionnelles")
+                    ListHeader(title: "Valeurs nutritionnelles")
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
                         if d.unit == .pc, let w = Fmt.parse(d.pieceWeight), w > 0 {
                             Text("Valeurs pour 1 pièce de \(Fmt.n1(w)) g, calculées à partir des valeurs pour 100 g.")
                         }
                         if let note = d.kcalNote { Text(note).foregroundStyle(Theme.warn) }
-                        Text(hint).foregroundStyle(kcalLooksOff ? Theme.warn : Theme.muted)
+                        coherence
                     }
                 }
                 Section {
@@ -177,9 +180,11 @@ struct IngredientEditor: View {
                     Text("Sert à trier la liste de courses.")
                 }
                 if let code = d.barcode {
-                    Section("Code-barres") {
+                    Section {
                         LabeledContent("EAN", value: code).monospacedDigit()
-                    }
+                    } header: {
+                    ListHeader(title: "Code-barres")
+                }
                 }
                 if let error {
                     Text(error).foregroundStyle(Theme.bad).font(.subheadline.weight(.semibold))
@@ -192,7 +197,10 @@ struct IngredientEditor: View {
                         if n > 0 { Text("Il est utilisé dans \(n) recette\(n > 1 ? "s" : "").") }
                     }
                 }
+                }
+                .listRowBackground(Theme.surface)
             }
+            .paperList()
             .navigationTitle(target.ingredient == nil ? "Nouvel ingrédient" : "Modifier l'ingrédient")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -246,7 +254,7 @@ struct IngredientEditor: View {
                 Button("Rescanner", systemImage: "barcode.viewfinder", action: onRescan)
             }
         } header: {
-            Text("Pas le bon produit ?")
+            ListHeader(title: "Pas le bon produit ?")
         } footer: {
             Text(altMessage ?? (searchTerms(scan).isEmpty
                 ? "Tape un nom ci-dessous pour chercher des produits proches sur Open Food Facts."
@@ -291,6 +299,25 @@ struct IngredientEditor: View {
     /// Champ de valeur saisi à la main (oublie la base pour 100 g gardée pour les conversions).
     private func manual(_ field: WritableKeyPath<IngredientDraft, String>) -> Binding<String> {
         Binding(get: { d[keyPath: field] }, set: { d[keyPath: field] = $0; d.valuesEdited() })
+    }
+
+    /// Contrôle de cohérence kcal ↔ macros : ✓ cohérent, ⚠ incohérent, ou l'aide si les kcal sont vides.
+    @ViewBuilder
+    private var coherence: some View {
+        let m = d.macros
+        let est = m.p * 4 + m.c * 4 + m.f * 9
+        if Fmt.parse(d.kcal) != nil, est > 0 {
+            HStack(spacing: 6) {
+                Image(systemName: kcalLooksOff ? "exclamationmark.triangle.fill" : "checkmark")
+                    .font(.caption.weight(.bold))
+                Text("D'après les macros ≈ \(Text(Fmt.n0(est)).fontWeight(.bold)) kcal, \(kcalLooksOff ? "à vérifier" : "cohérent").")
+            }
+            .foregroundStyle(kcalLooksOff ? Theme.warn : Theme.ok)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background((kcalLooksOff ? Theme.warn : Theme.ok).opacity(0.1), in: .rect(cornerRadius: 8))
+        } else {
+            Text(hint).foregroundStyle(Theme.muted)
+        }
     }
 
     private var kcalLooksOff: Bool {

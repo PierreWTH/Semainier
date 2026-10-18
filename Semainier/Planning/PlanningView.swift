@@ -174,6 +174,7 @@ struct RecipePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var recipes: [Recipe]
     @Query private var ingredients: [Ingredient]
+    @Query private var entries: [PlanEntry]
     @AppStorage("picker.mode") private var mode = "plats"
     @State private var query = ""
     @State private var creatingRecipe = false
@@ -200,6 +201,18 @@ struct RecipePickerSheet: View {
     private func isPicked(_ id: PersistentIdentifier) -> Bool { picks.contains { $0.id == id } }
     private var selecting: Bool { !picks.isEmpty }
 
+    /// Kcal du repas une fois la sélection ajoutée.
+    private var slotKcalAfter: Double {
+        let now = entries.filter { $0.date == ref.date && $0.slot == ref.slot }.map(\.totals.kcal).reduce(0, +)
+        let added = picks.map { p -> Double in
+            switch p {
+            case .recipe(let r): r.totals.kcal
+            case .ingredient(let i, let q): i.macros(qty: q).kcal
+            }
+        }.reduce(0, +)
+        return now + added
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -212,19 +225,44 @@ struct RecipePickerSheet: View {
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets())
                 } footer: {
-                    Text(selecting ? "Touche pour cocher ou décocher." : "Appui long pour en sélectionner plusieurs.")
-                        .padding(.top, 4)
+                    HStack {
+                        if selecting {
+                            let n = picks.count
+                            Text("Sélection · \(n) élément\(n > 1 ? "s" : "")").sectionLabel()
+                            Spacer()
+                            Button("Tout désélectionner") { withAnimation(.snappy) { picks = [] } }
+                                .font(.label).textCase(.uppercase).kerning(0.8).foregroundStyle(Theme.accent)
+                        } else {
+                            Text("Appui long pour en sélectionner plusieurs").sectionLabel()
+                        }
+                    }
+                    .padding(.top, 6)
                 }
                 if mode == "ingredients" { ingredientRows } else { recipeRows }
             }
+            .paperList()
             .searchable(text: $query, prompt: mode == "ingredients" ? "Rechercher un ingrédient" : "Rechercher un plat")
             .navigationTitle("Ajouter")
             .navigationSubtitle("\(Days.longLabel(ref.date)) · \(Week.slots[ref.slot])")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Fermer", role: .close) { dismiss() } }
-                // Créer ou scanner un ingrédient : en icônes, pour garder la liste épurée.
-                if mode == "ingredients" {
+                if selecting {
+                    // Le bouton du haut compte la sélection.
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(action: commit) {
+                            HStack(spacing: 6) {
+                                Text("Ajouter")
+                                Text("\(picks.count)").font(.caption.weight(.bold)).monospacedDigit()
+                                    .foregroundStyle(Theme.accent)
+                                    .padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Theme.onAccent, in: .capsule)
+                            }
+                        }
+                        .buttonStyle(.glassProminent)
+                    }
+                } else if mode == "ingredients" {
+                    // Créer ou scanner un ingrédient : en icônes, pour garder la liste épurée.
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button("Nouvel ingrédient", systemImage: "plus") { creatingIngredient = IngredientEditTarget(draft: IngredientDraft()) }
                         Button("Scanner un produit", systemImage: "barcode.viewfinder") { scanning = true }
@@ -233,16 +271,14 @@ struct RecipePickerSheet: View {
             }
             .safeAreaInset(edge: .bottom) {
                 if !picks.isEmpty {
-                    Button(action: commit) {
-                        Text("Ajouter \(picks.count) élément\(picks.count > 1 ? "s" : "")")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    // Ce que donnera le repas une fois la sélection ajoutée.
+                    Text("\(Week.slots[ref.slot]) après ajout : \(Text(Fmt.n0(slotKcalAfter) + " kcal").font(.subheadline.weight(.bold).width(.expanded)))")
+                        .font(.subheadline).monospacedDigit()
+                        .foregroundStyle(Theme.bg)
+                        .padding(.horizontal, 16).padding(.vertical, 9)
+                        .background(Theme.ink, in: .capsule)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .animation(.snappy, value: picks.count)
@@ -267,9 +303,7 @@ struct RecipePickerSheet: View {
     @ViewBuilder
     private func check(_ on: Bool) -> some View {
         if selecting {
-            Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .foregroundStyle(on ? Theme.accent : Theme.muted)
+            CheckCircle(on: on, size: 24)
                 .transition(.scale.combined(with: .opacity))
         }
     }
@@ -284,11 +318,17 @@ struct RecipePickerSheet: View {
                 let on = isPicked(r.persistentModelID)
                 HStack(spacing: 12) {
                     check(on)
-                    Text(r.name).foregroundStyle(.primary)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(r.name).font(.body).foregroundStyle(Theme.ink)
+                        MacroSplit(m: r.totals, height: 3).frame(width: 90)
+                    }
                     Spacer()
-                    Text("\(Fmt.n0(r.totals.kcal)) kcal").foregroundStyle(Theme.muted).monospacedDigit()
+                    Text("\(Text(Fmt.n0(r.totals.kcal)).font(.callout.weight(.semibold).width(.expanded)).foregroundStyle(Theme.ink)) \(Text("kcal").font(.caption).foregroundStyle(Theme.muted))")
+                        .monospacedDigit()
                 }
+                .padding(.vertical, 2)
                 .contentShape(.rect)
+                .listRowBackground(ZStack { Theme.surface; if on { Theme.accentWash } })
                 .onTapGesture { if selecting { toggle(r) } else { add([.recipe(r)]) } }
                 .onLongPressGesture(minimumDuration: 0.35) { if !on { picks.append(.recipe(r)) } }
                 .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
@@ -297,6 +337,8 @@ struct RecipePickerSheet: View {
         }
         Section {
             Button("Créer une nouvelle recette", systemImage: "plus") { creatingRecipe = true }
+                .foregroundStyle(Theme.accent)
+                .listRowBackground(Theme.surface)
         }
     }
 
@@ -308,23 +350,30 @@ struct RecipePickerSheet: View {
         ForEach(Rayon.allCases) { rayon in
             let items = list.filter { $0.rayon == rayon }
             if !items.isEmpty {
-                Section(rayon.rawValue) {
+                Section {
                     ForEach(items) { i in
                         let qty = pickedQty(i)
                         HStack(spacing: 12) {
                             check(qty != nil)
                             IngredientRow(ingredient: i)
                             if let qty {
-                                Text(Fmt.cook(qty, unit: i.unit))
-                                    .font(.subheadline.bold()).foregroundStyle(Theme.accent).monospacedDigit()
+                                QuantityChip(text: Fmt.cook(qty, unit: i.unit))
+                            } else if !selecting {
+                                // Le « + » montre qu'un toucher ajoute.
+                                Image(systemName: "plus").font(.footnote.weight(.bold)).foregroundStyle(Theme.accent)
+                                    .frame(width: 28, height: 28)
+                                    .background(Theme.accentSoft, in: .circle)
                             }
                         }
                         .contentShape(.rect)
+                        .listRowBackground(Theme.surface)
                         .onTapGesture { if selecting { toggle(i) } else { askQuantity(i, multi: false, delay: false) } }
                         .onLongPressGesture(minimumDuration: 0.35) { if qty == nil { askQuantity(i, multi: true, delay: false) } }
                         .accessibilityAddTraits(qty != nil ? [.isButton, .isSelected] : .isButton)
                         .accessibilityAction(named: "Sélectionner plusieurs") { if qty == nil { askQuantity(i, multi: true, delay: false) } }
                     }
+                } header: {
+                    ListHeader(title: rayon.rawValue, trailing: "\(items.count)")
                 }
             }
         }
@@ -387,26 +436,59 @@ struct QuantitySheet: View {
 
     private var qty: Double? { Fmt.parse(text).flatMap { $0 > 0 ? $0 : nil } }
 
+    /// Pas des boutons − / + : demi-pièce, ou 5 g / 5 ml.
+    private var step: Double { ingredient.unit == .pc ? 0.5 : 5 }
+
+    private func stepButton(_ symbol: String, _ dir: Double) -> some View {
+        Button(symbol == "plus" ? "Augmenter" : "Diminuer", systemImage: symbol) {
+            let v = (Fmt.parse(text) ?? 0) + dir * step
+            text = Fmt.input(max(step, (v / step).rounded() * step))
+        }
+        .labelStyle(.iconOnly)
+        .font(.body.weight(.semibold))
+        .foregroundStyle(Theme.ink)
+        .frame(width: 44, height: 44)
+        .background(Theme.surface2, in: .circle)
+        .buttonStyle(.plain)
+        .buttonRepeatBehavior(.enabled)
+        .sensoryFeedback(.increase, trigger: text)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
-                    HStack {
-                        TextField("0", text: $text)
-                            .keyboardType(.decimalPad)
-                            .focused($focused)
-                            .font(.title2.bold()).monospacedDigit()
-                        Text(ingredient.unit == .pc ? "pièce(s)" : ingredient.unit.short)
-                            .foregroundStyle(Theme.muted)
+                    // Champ de quantité : − valeur +, la valeur en Expanded, l'aperçu dessous.
+                    VStack(spacing: 10) {
+                        HStack(spacing: 14) {
+                            stepButton("minus", -1)
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                TextField("0", text: $text)
+                                    .keyboardType(.decimalPad)
+                                    .focused($focused)
+                                    .multilineTextAlignment(.center)
+                                    .font(.system(size: 34, weight: .bold).width(.expanded)).monospacedDigit()
+                                    .foregroundStyle(Theme.ink)
+                                    .fixedSize()
+                                Text(ingredient.unit == .pc ? "pc" : ingredient.unit.short)
+                                    .font(.title3).foregroundStyle(Theme.muted)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 58)
+                            .background(Theme.bg, in: .rect(cornerRadius: Theme.Radius.field))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.field)
+                                .strokeBorder(focused ? Theme.accent : Theme.line, lineWidth: 1.5))
+                            .contentShape(.rect)
+                            .onTapGesture { focused = true }
+                            stepButton("plus", 1)
+                        }
+                        IngredientMacros(m: ingredient.macros(qty: qty ?? 0), unit: " g", alignment: .center)
                     }
+                    .padding(.vertical, 6)
                 } header: {
-                    Text("Quantité")
+                    ListHeader(title: "Quantité")
                 } footer: {
-                    let m = ingredient.macros(qty: qty ?? 0)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(Fmt.n0(m.kcal)) kcal · \(MacroLine.text(m, unit: " g"))")
-                        if let note { Text(note) }
-                    }
+                    if let note { Text(note) }
                 }
                 if let original, let onReset, initial.map({ abs($0 - original) > 0.001 }) ?? false {
                     Section {
@@ -417,7 +499,10 @@ struct QuantitySheet: View {
                         }
                     }
                 }
+                }
+                .listRowBackground(Theme.surface)
             }
+            .paperList()
             .navigationTitle(ingredient.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -431,7 +516,7 @@ struct QuantitySheet: View {
                 }
             }
         }
-        .presentationDetents([.height(original != nil ? 330 : 260)])
+        .presentationDetents([.height(original != nil ? 380 : 310)])
         .onAppear {
             text = Fmt.input(initial ?? (ingredient.unit == .pc ? 1 : 100))
             focused = true

@@ -37,9 +37,12 @@ struct RecipeEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Nom du plat") {
+                Group {
+                Section {
                     TextField("Ex. Poulet, riz & brocoli", text: $name)
                         .focused($nameFocused)
+                } header: {
+                    ListHeader(title: "Nom du plat")
                 }
 
                 Section {
@@ -73,17 +76,19 @@ struct RecipeEditor: View {
                         picking = PickTarget(id: r.id)
                     }
                 } header: {
-                    Text("Ingrédients pour 1 portion")
+                    ListHeader(title: "Ingrédients pour 1 portion")
                 } footer: {
                     Text("Glisse vers la gauche pour retirer un ingrédient.")
                 }
 
-                Section("Total pour 1 portion") {
+                Section {
                     HStack {
                         Text("\(Text(Fmt.n0(totals.kcal)).font(.title3.bold())) kcal").monospacedDigit()
                         Spacer()
                         MacroLine(m: totals, unit: " g").font(.subheadline)
                     }
+                } header: {
+                    ListHeader(title: "Total pour 1 portion")
                 }
 
                 if let error {
@@ -97,7 +102,10 @@ struct RecipeEditor: View {
                         if recipe.uses > 0 { Text("Elle est utilisée \(recipe.uses)× dans le planning.") }
                     }
                 }
+                }
+                .listRowBackground(Theme.surface)
             }
+            .paperList()
             .navigationTitle(recipe == nil ? "Nouvelle recette" : "Modifier la recette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

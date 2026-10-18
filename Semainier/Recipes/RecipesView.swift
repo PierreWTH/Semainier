@@ -21,8 +21,7 @@ struct RecipesView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Quantités pour une portion. La taille de portion se règle dans le planning.")
-                        .font(.subheadline).foregroundStyle(Theme.muted)
+                    Text("Pour 1 portion · portion réglée dans le planning").sectionLabel()
                     if recipes.isEmpty {
                         ContentUnavailableView {
                             Label("Aucune recette", systemImage: "fork.knife")
@@ -57,21 +56,33 @@ struct RecipesView: View {
 
     private func card(_ r: Recipe) -> some View {
         let t = r.totals
-        return VStack(alignment: .leading, spacing: 9) {
+        let week = Days.range(from: Days.today, count: 7)
+        let used = Set((r.entries ?? []).map(\.date))
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(r.name).font(.body.weight(.semibold)).multilineTextAlignment(.leading)
+                Text(r.name).font(.headline).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
                 Spacer()
-                Text("\(Fmt.n0(t.kcal)) kcal").font(.system(.body, design: .rounded).bold()).monospacedDigit()
+                Text("\(Text(Fmt.n0(t.kcal)).font(.title3.weight(.bold).width(.expanded)).foregroundStyle(Theme.ink)) \(Text("kcal").font(.caption).foregroundStyle(Theme.muted))")
+                    .monospacedDigit()
             }
-            MacroSplit(m: t)
+            MacroSplit(m: t, height: 5)
             HStack {
-                MacroLine(m: t, unit: " g")
+                MacroLine(m: t, unit: " g").font(.meta).foregroundStyle(Theme.muted)
                 Spacer()
-                Text(r.upcomingUses > 0 ? "\(r.upcomingUses)× ces 7 jours" : "pas planifiée")
+                // L'usage sur les 7 prochains jours : un point par jour.
+                HStack(spacing: 4) {
+                    ForEach(week, id: \.self) { d in
+                        Circle().fill(used.contains(d) ? Theme.accent : Theme.surface2).frame(width: 6, height: 6)
+                    }
+                    Text(r.upcomingUses > 0 ? "\(r.upcomingUses)×" : "—").font(.label).foregroundStyle(Theme.muted)
+                        .padding(.leading, 2)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(r.upcomingUses > 0 ? "\(r.upcomingUses) fois ces 7 jours" : "Pas planifiée")
             }
-            .font(.caption).foregroundStyle(Theme.muted)
         }
-        .card(radius: 14, padding: 14)
+        .card(padding: 16)
         .contentShape(.rect)
     }
+
 }

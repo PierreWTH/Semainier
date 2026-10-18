@@ -39,25 +39,14 @@ struct DayView: View {
 
         VStack(alignment: .leading, spacing: 16) {
             strip(target)
+            totalCard(t, target: target)
 
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(Fmt.n0(t.kcal)).font(.system(size: 38, weight: .bold, design: .rounded))
-                            .contentTransition(.numericText(value: t.kcal))
-                        Text("/ \(Fmt.n0(target)) kcal").foregroundStyle(Theme.muted)
-                    }
-                    .monospacedDigit()
-                    ProgressBar(fraction: target > 0 ? t.kcal / target : 0,
-                                color: t.kcal > target ? Theme.over : Theme.accent)
-                        .animation(.snappy, value: t.kcal)
+            if dayEntries.isEmpty { emptyDay }
+
+            VStack(alignment: .leading, spacing: 24) {
+                ForEach(0..<4, id: \.self) { s in
+                    slotSection(s, dayEntries.filter { $0.slot == s })
                 }
-                MacroBars(totals: t, targets: settings.targets)
-            }
-            .card()
-
-            ForEach(0..<4, id: \.self) { s in
-                slotSection(s, dayEntries.filter { $0.slot == s })
             }
         }
         .contentShape(.rect)
@@ -86,139 +75,181 @@ struct DayView: View {
         .sensoryFeedback(.selection, trigger: day)
     }
 
+    /// Bandeau des 7 jours : abréviation mono, chiffre Expanded, jauge du jour.
+    /// Le jour choisi est en encre pleine : c'est le point d'arrivée de la pastille qui s'envole de la semaine.
     private func strip(_ target: Double) -> some View {
         HStack(spacing: 6) {
             ForEach(stripDays, id: \.self) { d in
                 let k = entries.totals(d).kcal
                 let on = d == day
                 Button { tap { withAnimation(.modeSwitch) { day = d } } } label: {
-                    VStack(spacing: 3) {
-                        Text(Days.shortLabel(d)).font(.footnote.bold())
+                    VStack(spacing: 2) {
+                        Text(Days.shortWeekday(d)).font(.system(size: 9, weight: .medium).monospaced())
+                            .textCase(.uppercase).kerning(0.6)
+                        Text(Days.dayNumber(d)).font(.title3.weight(.bold).width(.expanded)).monospacedDigit()
                             .lineLimit(1).minimumScaleFactor(0.7)
-                            .opacity(d < Days.today && !on ? 0.6 : 1)
-                        Text(k > 0 ? Fmt.n0(k) : "—").font(.caption2).monospacedDigit()
-                            .foregroundStyle(on ? Color(uiColor: .systemBackground).opacity(0.85) : Theme.muted)
-                        ProgressBar(fraction: target > 0 ? k / target : 0,
-                                    color: Theme.color(Nutrition.status(kcal: k, target: target)), height: 4)
-                            .padding(.horizontal, 6)
+                        Capsule()
+                            .fill(on && k > 0 && Theme.gauge(kcal: k, target: target) == Theme.ink ? Theme.bg : Theme.gauge(kcal: k, target: target))
+                            .frame(width: 20, height: 3)
+                            .opacity(k > 0 ? 1 : (on ? 0.35 : 1))
                     }
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
-                    .foregroundStyle(on ? Color(uiColor: .systemBackground) : .primary)
+                    .foregroundStyle(on ? Theme.bg : Theme.ink)
+                    .opacity(d < Days.today && !on ? 0.55 : 1)
                     .background {
-                        // La pastille bleue glisse d'un jour à l'autre, et vient de la colonne touchée dans la semaine.
                         if on {
-                            RoundedRectangle(cornerRadius: 10).fill(Theme.accent)
+                            RoundedRectangle(cornerRadius: Theme.Radius.cell).fill(Theme.ink)
                                 .matchedGeometryEffect(id: "jour", in: ns)
                         } else {
-                            RoundedRectangle(cornerRadius: 10).fill(Theme.surface)
-                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
+                            RoundedRectangle(cornerRadius: Theme.Radius.cell).fill(Theme.surface)
+                                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.cell).strokeBorder(Theme.line))
                         }
                     }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(Days.longLabel(d))
+                .accessibilityLabel(Days.longLabel(d) + (k > 0 ? ", \(Fmt.n0(k)) kcal" : ""))
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
     }
 
-    private func slotSection(_ s: Int, _ list: [PlanEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(Week.slots[s]).sectionLabel()
+    /// Carte « étiquette » du total : filet de 3 pt, chiffre héros, jauge des kcal et jauges des macros.
+    private func totalCard(_ t: Macros, target: Double) -> some View {
+        let rest = target - t.kcal
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Total du jour").sectionLabel()
                 Spacer()
-                let k = list.map(\.totals.kcal).reduce(0, +)
-                if k > 0 { Text("\(Fmt.n0(k)) kcal").font(.footnote).foregroundStyle(Theme.muted).monospacedDigit() }
+                Text(rest >= 0 ? "Reste \(Fmt.n0(rest)) kcal" : "Dépassé de \(Fmt.n0(-rest)) kcal")
+                    .sectionLabel(rest >= 0 ? Theme.muted : Theme.over)
+            }
+            LabelRule()
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Fmt.n0(t.kcal)).heroNumber()
+                    .foregroundStyle(t.kcal > target ? Theme.over : Theme.ink)
+                    .contentTransition(.numericText(value: t.kcal))
+                Text("/ \(Fmt.n0(target)) kcal").foregroundStyle(Theme.muted).monospacedDigit()
+            }
+            .lineLimit(1).minimumScaleFactor(0.6)
+            ProgressBar(fraction: target > 0 ? t.kcal / target : 0,
+                        color: t.kcal > target ? Theme.over : Theme.accent)
+                .animation(.snappy, value: t.kcal)
+            if t.kcal > 0 {
+                MacroBars(totals: t, targets: settings.targets)
+                    .padding(.top, 6)
+            }
+        }
+        .card()
+    }
+
+    /// Jour vide : une étiquette vierge et une seule action.
+    private var emptyDay: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.plaintext").font(.system(size: 40, weight: .light)).foregroundStyle(Theme.muted)
+                .padding(.bottom, 4)
+            Text("\(Days.weekday(day)) est encore vide").font(.headline).foregroundStyle(Theme.ink)
+            Text("Ajoute un plat, ou copie une journée déjà prévue depuis le menu •••")
+                .font(.subheadline).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
+            Button { tap { add(0) } } label: { Label("Ajouter un plat", systemImage: "plus") }
+                .buttonStyle(.primary)
+                .padding(.top, 6)
+        }
+        .padding(.vertical, 26).padding(.horizontal, 20)
+        .frame(maxWidth: .infinity)
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card)
+            .strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
+    }
+
+    /// Repas : étiquette mono, total, « + », répartition G · P · L puis les plats.
+    private func slotSection(_ s: Int, _ list: [PlanEntry]) -> some View {
+        let m = list.map(\.totals).sum
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(Week.slots[s]).sectionLabel(Theme.ink)
+                Spacer()
+                if m.kcal > 0 {
+                    Text("\(Text(Fmt.n0(m.kcal)).font(.callout.weight(.semibold).width(.expanded))) \(Text("kcal").font(.caption).foregroundStyle(Theme.muted))")
+                        .monospacedDigit()
+                }
+                Button { tap { add(s) } } label: {
+                    Image(systemName: "plus").font(.body.weight(.medium)).foregroundStyle(Theme.accent)
+                        .frame(width: 32, height: 32).contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ajouter un plat")
             }
             .padding(.horizontal, 2)
 
-            if !list.isEmpty {
-                // Récap du repas : répartition des kcal entre G / P / L.
-                let m = list.map(\.totals).sum
-                VStack(alignment: .leading, spacing: 5) {
-                    MacroLine(m: m, unit: " g").font(.caption).foregroundStyle(Theme.muted)
-                    MacroSplit(m: m, height: 4)
-                }
-                .padding(.horizontal, 2)
+            if list.isEmpty {
+                Rectangle().fill(Theme.line).frame(height: 1)
+            } else {
+                if list.count > 1 { MacroSplit(m: m, height: 3) }
+                ForEach(list) { e in entryRow(e) }
             }
-
-            ForEach(list) { e in entryRow(e) }
-
-            Button { tap { add(s) } } label: {
-                Label("Ajouter un plat", systemImage: "plus")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Theme.accent)
         }
     }
 
+    /// Carte de plat : titre, méta, micro-barre G · P · L, chevron pour déplier les ingrédients.
+    /// Un ingrédient seul montre sa quantité en pastille. Appui long : retirer.
     @ViewBuilder
     private func entryRow(_ e: PlanEntry) -> some View {
         if e.isValid {
             let open = expanded.contains(e.persistentModelID)
             let t = e.totals
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 4) {
-                    Button {
-                        tap {
-                            if e.ingredient != nil {
-                                editingQty = e
-                            } else {
-                                withAnimation(.snappy) {
-                                    if open { expanded.remove(e.persistentModelID) } else { expanded.insert(e.persistentModelID) }
-                                }
+                Button {
+                    tap {
+                        if e.ingredient != nil {
+                            editingQty = e
+                        } else {
+                            withAnimation(.snappy) {
+                                if open { expanded.remove(e.persistentModelID) } else { expanded.insert(e.persistentModelID) }
                             }
                         }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(e.title).fontWeight(.semibold).multilineTextAlignment(.leading)
-                            Group {
-                                if let g = e.ingredient {
-                                    Text("\(Fmt.cook(e.qty * e.x, unit: g.unit)) · \(Fmt.n0(t.kcal)) kcal · \(MacroLine.text(t))")
-                                } else {
-                                    Text("\(Fmt.n0(t.kcal)) kcal · \(MacroLine.text(t))")
-                                }
-                            }
-                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                } label: {
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(e.title).font(.headline).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
+                            IngredientMacros(m: t)
+                            MacroSplit(m: t, height: 3).frame(width: 140).padding(.top, 3)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 8)
-                        .contentShape(.rect)
+                        Spacer(minLength: 4)
+                        if let g = e.ingredient {
+                            QuantityChip(text: Fmt.cook(e.qty * e.x, unit: g.unit))
+                        } else {
+                            Image(systemName: "chevron.down")
+                                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+                                .rotationEffect(.degrees(open ? 180 : 0))
+                                .frame(width: 30, height: 30)
+                                .background(Theme.surface2, in: .circle)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint(e.ingredient != nil ? "Modifier la quantité" : open ? "Masquer les ingrédients" : "Afficher les ingrédients")
-
-                    Button("Retirer \(e.title)", systemImage: "xmark") {
-                        tap { withAnimation(.snappy) { context.delete(e) } }
-                    }
-                    .labelStyle(.iconOnly)
-                    .font(.body)
-                    .foregroundStyle(Theme.muted)
-                    .frame(width: 34, height: 34)
-                    .buttonStyle(.borderless)
+                    .padding(.vertical, 14).padding(.horizontal, 16)
+                    .contentShape(.rect)
                 }
+                .buttonStyle(.plain)
+                .accessibilityHint(e.ingredient != nil ? "Modifier la quantité" : open ? "Masquer les ingrédients" : "Afficher les ingrédients")
+                .accessibilityAction(named: "Retirer") { withAnimation(.snappy) { context.delete(e) } }
 
                 if open, let r = e.recipe {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 0) {
                         ForEach(r.sortedItems) { it in
                             if let g = it.ingredient {
                                 let q = e.qty(for: it) * e.x
-                                // Toute la ligne ouvre la saisie ; la quantité en pastille montre que c'est modifiable.
+                                Rectangle().fill(Theme.line).frame(height: 1)
+                                // Toute la ligne ouvre la saisie ; la pastille ✎ montre que c'est modifiable.
                                 Button { tap { editingItem = ItemEdit(entry: e, item: it) } } label: {
                                     HStack(alignment: .center) {
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(g.name).font(.subheadline)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(g.name).font(.body).foregroundStyle(Theme.ink)
                                             IngredientMacros(m: g.macros(qty: q))
                                         }
                                         Spacer(minLength: 8)
                                         QuantityChip(text: Fmt.cook(q, unit: g.unit), modified: e.isOverridden(it))
                                     }
+                                    .padding(.vertical, 4)
                                     .contentShape(.rect)
                                 }
                                 .buttonStyle(.plain)
@@ -226,18 +257,27 @@ struct DayView: View {
                             }
                         }
                     }
-                    .padding(.top, 8).padding(.bottom, 8).padding(.trailing, 8)
-                    .overlay(alignment: .top) {
-                        Rectangle().fill(Theme.line).frame(height: 1)
-                    }
+                    .padding(.horizontal, 16).padding(.bottom, 6)
                     // Fondu seul : la carte s'agrandit ou se réduit, la liste ne glisse plus par-dessus le titre.
                     .transition(.opacity)
                 }
             }
-            .padding(.leading, 12).padding(.trailing, 4).padding(.vertical, 4)
-            .background(Theme.surface, in: .rect(cornerRadius: 12))
-            .clipShape(.rect(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+            .background(Theme.surface, in: .rect(cornerRadius: Theme.Radius.card))
+            .clipShape(.rect(cornerRadius: Theme.Radius.card))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.line.opacity(0.7)))
+            .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.Radius.card))
+            .contextMenu {
+                if e.recipe != nil {
+                    Button(open ? "Replier" : "Voir les ingrédients", systemImage: "list.bullet") {
+                        withAnimation(.snappy) {
+                            if open { expanded.remove(e.persistentModelID) } else { expanded.insert(e.persistentModelID) }
+                        }
+                    }
+                }
+                Button("Retirer", systemImage: "trash", role: .destructive) {
+                    withAnimation(.snappy) { context.delete(e) }
+                }
+            }
         }
     }
 }
@@ -283,6 +323,7 @@ struct CopyDaySheet: View {
     var body: some View {
         NavigationStack {
             List {
+                Group {
                 Section {
                     ForEach(targets, id: \.self) { d in
                         Button {
@@ -299,7 +340,10 @@ struct CopyDaySheet: View {
                 } footer: {
                     Text("Les jours choisis prennent exactement les mêmes plats et portions. Leur contenu actuel est remplacé.")
                 }
+                }
+                .listRowBackground(Theme.surface)
             }
+            .paperList()
             .navigationTitle("Copier le \(Days.longLabel(source).lowercased())")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

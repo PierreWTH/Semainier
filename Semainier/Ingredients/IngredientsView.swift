@@ -15,20 +15,23 @@ struct IngredientsView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("Valeurs pour 100 g, 100 ml ou par pièce (produit cru, comme sur l'étiquette).")
-                        .font(.subheadline).foregroundStyle(Theme.muted)
+                    Text("Valeurs pour 100 g, 100 ml ou par pièce · produit cru, comme sur l'étiquette")
+                        .sectionLabel()
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
                 }
                 ForEach(Rayon.allCases) { rayon in
                     let items = filtered.filter { $0.rayon == rayon }
                     if !items.isEmpty {
-                        Section(rayon.rawValue) {
+                        Section {
                             ForEach(items) { i in
                                 Button { editing = IngredientEditTarget(ingredient: i) } label: { IngredientRow(ingredient: i) }
                                     .buttonStyle(.plain)
                                     .swipeActions(edge: .trailing) { deleteAction(i) }
+                                    .listRowBackground(Theme.surface)
                             }
+                        } header: {
+                            ListHeader(title: rayon.rawValue, trailing: "\(items.count)")
                         }
                     }
                 }
@@ -51,6 +54,7 @@ struct IngredientsView: View {
             ), titleVisibility: .visible, presenting: pendingDelete) { ing in
                 Button("Supprimer (\(Self.usageText(ing)))", role: .destructive) { delete(ing) }
             }
+            .paperList()
             .searchable(text: $query, prompt: "Rechercher")
             .navigationTitle("Ingrédients")
             .toolbar {
@@ -109,11 +113,12 @@ struct IngredientRow: View {
 
     var body: some View {
         let i = ingredient
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Text(i.name).fontWeight(.semibold)
+                Text(i.name).font(.headline).foregroundStyle(Theme.ink)
+                UnitTag(text: i.unit == .pc ? "pièce" : i.unit == .ml ? "100 ml" : "100 g")
                 if i.barcode != nil {
-                    Image(systemName: "barcode").font(.caption).foregroundStyle(Theme.muted)
+                    Image(systemName: "barcode").font(.caption2).foregroundStyle(Theme.muted)
                         .accessibilityLabel("Scanné")
                 }
                 if i.kcalLooksOff {
@@ -121,8 +126,8 @@ struct IngredientRow: View {
                         .accessibilityLabel("Kcal incohérentes avec les macros")
                 }
             }
-            Text("\(i.unit.per) · \(Fmt.n0(i.kcal)) kcal · \(Text("G").bold().foregroundStyle(Theme.carb)) \(Fmt.n1(i.c)) · \(Text("P").bold().foregroundStyle(Theme.prot)) \(Fmt.n1(i.p)) · \(Text("L").bold().foregroundStyle(Theme.fat)) \(Fmt.n1(i.f))")
-                .font(.caption).foregroundStyle(Theme.muted).monospacedDigit()
+            Text("\(Text(Fmt.n0(i.kcal)).fontWeight(.semibold).foregroundStyle(Theme.ink)) kcal · \(Text("G").bold().foregroundStyle(Theme.carb)) \(Fmt.n1(i.c)) · \(Text("P").bold().foregroundStyle(Theme.prot)) \(Fmt.n1(i.p)) · \(Text("L").bold().foregroundStyle(Theme.fat)) \(Fmt.n1(i.f))")
+                .font(.meta).foregroundStyle(Theme.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
@@ -145,15 +150,19 @@ struct IngredientPicker: View {
                 ForEach(Rayon.allCases) { rayon in
                     let items = filtered.filter { $0.rayon == rayon }
                     if !items.isEmpty {
-                        Section(rayon.rawValue) {
+                        Section {
                             ForEach(items) { i in
                                 Button { pick(i) } label: { IngredientRow(ingredient: i) }
                                     .buttonStyle(.plain)
+                                    .listRowBackground(Theme.surface)
                             }
+                        } header: {
+                            ListHeader(title: rayon.rawValue, trailing: "\(items.count)")
                         }
                     }
                 }
             }
+            .paperList()
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Rechercher un ingrédient")
             .navigationTitle("Choisir un ingrédient")
             .navigationBarTitleDisplayMode(.inline)
