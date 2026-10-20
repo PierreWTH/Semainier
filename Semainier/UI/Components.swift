@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// « G 50 · P 32 · L 10 » : lettres colorées en gras, valeurs en chiffres tabulaires.
+/// « G 50 · P 32 · L 10 » : la lettre porte la couleur de la macro, le chiffre reste en couleur texte.
 struct MacroLine: View {
     var m: Macros
     var unit = ""
@@ -8,199 +8,133 @@ struct MacroLine: View {
     var body: some View { Self.text(m, unit: unit) }
 
     static func text(_ m: Macros, unit: String = "") -> Text {
-        Text("\(letter("G", Theme.carb)) \(Fmt.n0(m.c)) · \(letter("P", Theme.prot)) \(Fmt.n0(m.p)) · \(letter("L", Theme.fat)) \(Fmt.n0(m.f))\(unit)")
+        Text("\(letter(.glucides)) \(Fmt.n0(m.c)) · \(letter(.proteines)) \(Fmt.n0(m.p)) · \(letter(.lipides)) \(Fmt.n0(m.f))\(unit)")
             .monospacedDigit()
     }
 
-    private static func letter(_ s: String, _ c: Color) -> Text {
-        Text(s).bold().foregroundStyle(c)
+    static func letter(_ macro: Macro) -> Text {
+        Text(macro.lettre).bold().foregroundStyle(macro.texte)
     }
 }
 
-/// « 294 kcal · G 47 · P 11 · L 6 » : le chiffre des kcal en gras, le reste en méta.
+/// « 165 kcal · G 0 · P 41 · L 3 g » en petit, sous un ingrédient.
 struct IngredientMacros: View {
     var m: Macros
-    var unit = ""
-    var alignment: Alignment = .leading
 
     var body: some View {
-        Text("\(Text(Fmt.n0(m.kcal)).fontWeight(.semibold).foregroundStyle(Theme.ink)) kcal · \(MacroLine.text(m, unit: unit))")
-            .font(.meta).foregroundStyle(Theme.muted)
-            .frame(maxWidth: .infinity, alignment: alignment)
+        Text("\(Fmt.n0(m.kcal)) kcal · \(MacroLine.text(m, unit: " g"))")
+            .font(.footnote).foregroundStyle(Color.texte2)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// Pastille de quantité touchable : capsule accent doux + petite plume ✎. Cible tactile de 44 pt.
+/// Pastille de quantité d'un ingrédient de plat déplié. Toute la ligne est touchable (au moins 44 pt de haut).
 /// Un point signale une quantité modifiée pour ce plat.
 struct QuantityChip: View {
     var text: String
     var modified = false
+    @ScaledMetric(relativeTo: .footnote) private var size: CGFloat = 13.5
 
     var body: some View {
         HStack(spacing: 5) {
             if modified {
-                Circle().fill(Theme.accent).frame(width: 5, height: 5)
+                Circle().fill(Color.accentColor).frame(width: 5, height: 5)
                     .accessibilityLabel("Modifiée")
             }
-            Text(text).font(.callout.weight(.semibold).width(.expanded)).monospacedDigit()
-            Image(systemName: "pencil").font(.caption2.weight(.semibold)).opacity(0.7)
+            quantity
         }
-        .foregroundStyle(Theme.accent)
-        .padding(.horizontal, 11).padding(.vertical, 5)
-        .background(Theme.accentSoft, in: .capsule)
-        .padding(.vertical, 6)
-        .contentShape(.rect)
+        .font(.system(size: size, weight: .semibold, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(Color.accentColor)
+        .padding(.horizontal, 10)
+        .frame(minWidth: 54, minHeight: 28)
+        .background(Color.accentDoux, in: .rect(cornerRadius: 8))
+    }
+
+    /// Le nombre en Semibold, l'unité (« g », « pièces ») en Regular.
+    private var quantity: Text {
+        let q = QuantityParts(text)
+        guard let unit = q.unit else { return Text(q.number) }
+        return Text("\(Text(q.number)) \(Text(unit).fontWeight(.regular))")
     }
 }
 
-/// Trois jauges G / P / L par rapport aux objectifs ; au-delà de +3 %, le dépassement
-/// apparaît en segment brique séparé et en « +8 » à côté du libellé.
-struct MacroBars: View {
-    var totals: Macros
-    var targets: Macros
+/// « 250 g » → nombre « 250 » et unité « g », pour les styler séparément.
+struct QuantityParts {
+    var number: String
+    var unit: String?
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            bar("Glucides", totals.c, targets.c, Theme.carb)
-            bar("Protéines", totals.p, targets.p, Theme.prot)
-            bar("Lipides", totals.f, targets.f, Theme.fat)
+    init(_ text: String) {
+        if let i = text.firstIndex(of: " ") {
+            number = String(text[..<i])
+            unit = String(text[text.index(after: i)...])
+        } else {
+            number = text
         }
-    }
-
-    private func bar(_ label: String, _ v: Double, _ t: Double, _ color: Color) -> some View {
-        let over = Nutrition.isOver(v, target: t)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(label).sectionLabel(color)
-                if over {
-                    Text("+\(Fmt.n0(v - t))").font(.label).foregroundStyle(Theme.over)
-                }
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(Fmt.n0(v)).font(.strongNumber).foregroundStyle(over ? Theme.over : Theme.ink)
-                Text("/\(Fmt.n0(t)) g").font(.caption).foregroundStyle(Theme.muted)
-            }
-            .lineLimit(1).minimumScaleFactor(0.8)
-            MacroGauge(value: v, target: t, color: color)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
     }
 }
 
-/// Jauge de 6 pt : remplie jusqu'à l'objectif ; un dépassement s'ajoute en segment brique, séparé de 2 pt.
-struct MacroGauge: View {
-    var value: Double
-    var target: Double
-    var color: Color
-    var height: CGFloat = 6
+/// Cercle de sélection : contour 1,5 pt `texte3`, ou accent plein avec une coche.
+struct CercleCoche: View {
+    var on: Bool
+    var size: CGFloat = 24
+    @ScaledMetric private var scale: CGFloat = 1
 
     var body: some View {
-        let over = Nutrition.isOver(value, target: target)
-        GeometryReader { g in
-            let w = g.size.width
-            if over {
-                // Proportion objectif / dépassement sur toute la largeur.
-                let main = w * target / value
-                HStack(spacing: 2) {
-                    Capsule().fill(color).frame(width: max(main - 2, 0))
-                    Capsule().fill(Theme.over)
-                }
+        ZStack {
+            if on {
+                Circle().fill(Color.accentColor)
+                Image(systemName: "checkmark")
+                    .font(.system(size: size * scale * 0.5, weight: .bold))
+                    .foregroundStyle(Color.surAccent)
             } else {
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.surface2)
-                    Capsule().fill(color).frame(width: w * min(max(target > 0 ? value / target : 0, 0), 1))
-                }
+                Circle().strokeBorder(Color.texte3, lineWidth: 1.5)
             }
         }
-        .frame(height: height)
-        .animation(.snappy, value: value)
-    }
-}
-
-/// Jauge simple (kcal, panier) : capsule de couleur sur une piste surface 2.
-struct ProgressBar: View {
-    var fraction: Double
-    var color: Color
-    var height: CGFloat = 6
-
-    var body: some View {
-        Capsule().fill(Theme.surface2)
-            .frame(height: height)
-            .overlay(alignment: .leading) {
-                GeometryReader { g in
-                    Capsule().fill(color).frame(width: g.size.width * min(max(fraction, 0), 1))
-                }
-            }
-            .clipShape(.capsule)
-    }
-}
-
-/// Barre de répartition des kcal G / P / L : segments séparés de 2 pt.
-struct MacroSplit: View {
-    var m: Macros
-    var height: CGFloat = 6
-
-    var body: some View {
-        let kp = m.p * 4, kc = m.c * 4, kf = m.f * 9
-        let total = max(kp + kc + kf, 1)
-        GeometryReader { g in
-            let w = g.size.width - 4
-            HStack(spacing: 2) {
-                Capsule().fill(Theme.carb).frame(width: max(w * kc / total, 0))
-                Capsule().fill(Theme.prot).frame(width: max(w * kp / total, 0))
-                Capsule().fill(Theme.fat).frame(width: max(w * kf / total, 0))
-            }
-        }
-        .frame(height: height)
+        .frame(width: size * scale, height: size * scale)
         .accessibilityHidden(true)
     }
 }
 
-/// Bouton principal : capsule faïence pleine.
-struct PrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline)
-            .foregroundStyle(Theme.onAccent)
-            .padding(.horizontal, 26).padding(.vertical, 14)
-            .background(Theme.accent, in: .capsule)
-            .opacity(configuration.isPressed ? 0.85 : 1)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.snappy, value: configuration.isPressed)
-    }
-}
-
-extension ButtonStyle where Self == PrimaryButtonStyle {
-    static var primary: PrimaryButtonStyle { PrimaryButtonStyle() }
-}
-
-/// Coche ronde (courses, sélection) : cercle cerné, ou rempli faïence avec la coche.
-struct CheckCircle: View {
-    var on: Bool
-    var size: CGFloat = 28
+/// Les trois macros de la carte total, une ligne par colonne : « G 259 / 310 g », puis la barre de 4 pt.
+/// Aux tailles d'accessibilité, les colonnes passent en lignes.
+struct MacroBars: View {
+    var totals: Macros
+    var targets: Macros
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .footnote) private var letterSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .caption) private var unitSize: CGFloat = 12
 
     var body: some View {
-        ZStack {
-            Circle().strokeBorder(Theme.line, lineWidth: 2).opacity(on ? 0 : 1)
-            Circle().fill(Theme.accent).opacity(on ? 1 : 0)
-            Image(systemName: "checkmark").font(.system(size: size * 0.45, weight: .bold))
-                .foregroundStyle(Theme.onAccent).opacity(on ? 1 : 0)
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+        layout {
+            bar(.glucides, totals.c, targets.c)
+            bar(.proteines, totals.p, targets.p)
+            bar(.lipides, totals.f, targets.f)
         }
-        .frame(width: size, height: size)
-        .animation(.snappy, value: on)
     }
-}
 
-/// Étiquette d'unité (« PIÈCE », « 100 G ») en mono, sur fond surface 2.
-struct UnitTag: View {
-    var text: String
-
-    var body: some View {
-        Text(text).font(.system(size: 9, weight: .medium).monospaced()).textCase(.uppercase).kerning(0.5)
-            .foregroundStyle(Theme.muted)
-            .padding(.horizontal, 5).padding(.vertical, 2)
-            .background(Theme.surface2, in: .rect(cornerRadius: 4))
+    private func bar(_ macro: Macro, _ v: Double, _ t: Double) -> some View {
+        let over = Seuil.depasse(v, objectif: t)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(macro.lettre).font(.system(size: letterSize, weight: .bold)).foregroundStyle(macro.texte)
+                Text(Fmt.n0(v)).police(.valeurMacroCarte)
+                    .foregroundStyle(over ? Color.depassement : v > 0 ? Color.texte : Color.texte3)
+                    .contentTransition(.numericText(value: v))
+                Text("/ \(Fmt.n0(t)) g").font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .monospacedDigit()
+            BarreObjectif(valeur: v, objectif: t, couleur: macro.trait, piste: .pisteCarteTotal, hauteur: 4)
+                .animation(.snappy, value: v)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Le libellé visible n'est plus qu'une lettre : VoiceOver lit le nom complet.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(macro.libelle) \(Fmt.n0(v)) sur \(Fmt.n0(t)) grammes")
+        .accessibilityValue(over ? "objectif dépassé" : "")
     }
 }
 

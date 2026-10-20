@@ -87,12 +87,14 @@ struct IngredientDraft {
         (Fmt.parse(p) ?? 0, Fmt.parse(c) ?? 0, Fmt.parse(f) ?? 0)
     }
 
-    /// Kcal saisies, ou 4P + 4G + 9L si le champ est vide.
-    var resolvedKcal: Double {
-        if let k = Fmt.parse(kcal) { return k }
+    /// Kcal déduites des macros saisies (4 / 4 / 9).
+    var macroKcal: Double {
         let m = macros
-        return (m.p * 4 + m.c * 4 + m.f * 9).rounded()
+        return Macros(p: m.p, c: m.c, f: m.f).kcalFromMacros
     }
+
+    /// Kcal saisies, ou 4P + 4G + 9L si le champ est vide.
+    var resolvedKcal: Double { Fmt.parse(kcal) ?? macroKcal.rounded() }
 }
 
 /// Contexte d'un scan, pour proposer d'autres résultats si le premier n'est pas le bon.
@@ -134,85 +136,85 @@ struct IngredientEditor: View {
         NavigationStack {
             Form {
                 Group {
-                if let note = target.note {
-                    Section { Label(note, systemImage: "barcode.viewfinder").font(.subheadline) }
-                }
-                if let scan = target.scan, target.ingredient == nil {
-                    scanSection(scan)
-                }
-                Section {
-                    TextField("Ex. Flocons d'avoine", text: $d.name)
-                        .focused($nameFocused)
-                } header: {
-                    ListHeader(title: "Nom")
-                }
-                Section {
-                    Picker("Valeurs données", selection: Binding(get: { d.unit }, set: { d.setUnit($0) })) {
-                        ForEach(Unit.allCases) { u in
-                            Text(u.per.capitalizedFirst).tag(u)
-                        }
+                    if let note = target.note {
+                        Section { Label(note, systemImage: "barcode.viewfinder").font(.subheadline) }
                     }
-                    if d.unit == .pc {
-                        NumberField(label: "Poids d'une pièce",
-                                    text: Binding(get: { d.pieceWeight }, set: { d.setPieceWeight($0) }),
-                                    placeholder: "ex. 300", unit: "g")
+                    if let scan = target.scan, target.ingredient == nil {
+                        scanSection(scan)
                     }
-                    NumberField(label: "Kcal", text: manual(\.kcal), placeholder: kcalPlaceholder)
-                    NumberField(label: "Glucides", text: manual(\.c), color: Theme.carb, unit: "g")
-                    NumberField(label: "Protéines", text: manual(\.p), color: Theme.prot, unit: "g")
-                    NumberField(label: "Lipides", text: manual(\.f), color: Theme.fat, unit: "g")
-                } header: {
-                    ListHeader(title: "Valeurs nutritionnelles")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if d.unit == .pc, let w = Fmt.parse(d.pieceWeight), w > 0 {
-                            Text("Valeurs pour 1 pièce de \(Fmt.n1(w)) g, calculées à partir des valeurs pour 100 g.")
-                        }
-                        if let note = d.kcalNote { Text(note).foregroundStyle(Theme.warn) }
-                        coherence
+                    Section("Nom") {
+                        TextField("Ex. Flocons d'avoine", text: $d.name)
+                            .focused($nameFocused)
                     }
-                }
-                Section {
-                    Picker("Rayon", selection: $d.rayon) {
-                        ForEach(Rayon.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                } footer: {
-                    Text("Sert à trier la liste de courses.")
-                }
-                if let code = d.barcode {
                     Section {
-                        LabeledContent("EAN", value: code).monospacedDigit()
+                        Picker("Valeurs données", selection: Binding(get: { d.unit }, set: { d.setUnit($0) })) {
+                            ForEach(Unit.allCases) { u in
+                                Text(u.per.capitalizedFirst).tag(u)
+                            }
+                        }
+                        if d.unit == .pc {
+                            NumberField(label: "Poids d'une pièce",
+                                        text: Binding(get: { d.pieceWeight }, set: { d.setPieceWeight($0) }),
+                                        placeholder: "ex. 300")
+                        }
+                        NumberField(label: "Kcal", text: manual(\.kcal), placeholder: kcalPlaceholder,
+                                    valueColor: kcalLooksOff ? .attention : nil)
+                        NumberField(label: "Glucides (g)", text: manual(\.c), color: Color.glucTexte)
+                        NumberField(label: "Protéines (g)", text: manual(\.p), color: Color.protTexte)
+                        NumberField(label: "Lipides (g)", text: manual(\.f), color: Color.lipTexte)
                     } header: {
-                    ListHeader(title: "Code-barres")
-                }
-                }
-                if let error {
-                    Text(error).foregroundStyle(Theme.bad).font(.subheadline.weight(.semibold))
-                }
-                if let ing = target.ingredient {
-                    Section {
-                        Button("Supprimer l'ingrédient", role: .destructive) { confirmDelete = true }
+                        Text("Valeurs nutritionnelles")
                     } footer: {
-                        let n = ing.recipeCount
-                        if n > 0 { Text("Il est utilisé dans \(n) recette\(n > 1 ? "s" : "").") }
+                        VStack(alignment: .leading, spacing: 6) {
+                            if d.unit == .pc, let w = Fmt.parse(d.pieceWeight), w > 0 {
+                                Text("Valeurs pour 1 pièce de \(Fmt.n1(w)) g, calculées à partir des valeurs pour 100 g.")
+                            }
+                            if let note = d.kcalNote { Text(note).foregroundStyle(Color.attention) }
+                            Text(hint).foregroundStyle(kcalLooksOff ? Color.attention : Color.texte2)
+                        }
+                    }
+                    Section {
+                        Picker("Rayon", selection: $d.rayon) {
+                            ForEach(Rayon.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                    } footer: {
+                        Text("Sert à trier la liste de courses.")
+                    }
+                    if let code = d.barcode {
+                        Section("Code-barres") {
+                            LabeledContent("EAN", value: code).monospacedDigit()
+                        }
+                    }
+                    if let error {
+                        Text(error).foregroundStyle(Color.depassement).font(.subheadline.weight(.semibold))
+                    }
+                    if let ing = target.ingredient {
+                        Section {
+                            Button("Supprimer l'ingrédient", role: .destructive) { confirmDelete = true }
+                        } footer: {
+                            let n = ing.recipeCount
+                            if n > 0 { Text("Il est utilisé dans \(n) recette\(n > 1 ? "s" : "").") }
+                        }
                     }
                 }
-                }
-                .listRowBackground(Theme.surface)
+                .listRowBackground(Color.surface)
             }
-            .paperList()
+            .fondEcran()
             .navigationTitle(target.ingredient == nil ? "Nouvel ingrédient" : "Modifier l'ingrédient")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Annuler", role: .cancel) { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Enregistrer", role: .confirm, action: save) }
             }
-            .confirmationDialog("Supprimer cet ingrédient ?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button(deleteLabel, role: .destructive) {
+            .alert("Supprimer cet ingrédient ?", isPresented: $confirmDelete) {
+                Button("Annuler", role: .cancel) {}
+                Button("Supprimer", role: .destructive) {
                     if let ing = target.ingredient { PlanActions.delete(ing, settings: settings, in: context) }
                     toast.show("Ingrédient supprimé")
                     dismiss()
                 }
+            } message: {
+                if let usage = deleteUsage { Text(usage) }
             }
         }
         .onAppear {
@@ -226,6 +228,7 @@ struct IngredientEditor: View {
                 }
             }
         }
+        .presentationBackground(Color.fond)
     }
 
     @ViewBuilder
@@ -234,7 +237,7 @@ struct IngredientEditor: View {
         Section {
             if altIndex > 0, let alt = alternatives?[altIndex - 1] {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Résultat \(altIndex + 1) / \(total)").font(.caption.bold()).foregroundStyle(Theme.accent)
+                    Text("Résultat \(altIndex + 1) / \(total)").font(.caption.bold()).foregroundStyle(Color.accentColor)
                     Text([alt.name, alt.quantity].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.subheadline)
                 }
@@ -254,10 +257,10 @@ struct IngredientEditor: View {
                 Button("Rescanner", systemImage: "barcode.viewfinder", action: onRescan)
             }
         } header: {
-            ListHeader(title: "Pas le bon produit ?")
+            Text("Pas le bon produit ?")
         } footer: {
             Text(altMessage ?? (searchTerms(scan).isEmpty
-                ? "Tape un nom ci-dessous pour chercher des produits proches sur Open Food Facts."
+                ? "Taper un nom ci-dessous pour chercher des produits proches sur Open Food Facts."
                 : "Propose des produits proches sur Open Food Facts (autres formats, même marque). Le code-barres scanné est conservé."))
         }
     }
@@ -280,7 +283,7 @@ struct IngredientEditor: View {
             }
         }
         guard let alts = alternatives, !alts.isEmpty else {
-            altMessage = "Aucun autre produit proche trouvé. Essaie de rescanner, ou corrige les valeurs à la main."
+            altMessage = "Aucun autre produit proche trouvé. Essayer de rescanner, ou corriger les valeurs à la main."
             return
         }
         altMessage = nil
@@ -291,8 +294,7 @@ struct IngredientEditor: View {
     }
 
     private var kcalPlaceholder: String {
-        let m = d.macros
-        let est = m.p * 4 + m.c * 4 + m.f * 9
+        let est = d.macroKcal
         return est > 0 ? Fmt.n0(est) : "0"
     }
 
@@ -301,51 +303,31 @@ struct IngredientEditor: View {
         Binding(get: { d[keyPath: field] }, set: { d[keyPath: field] = $0; d.valuesEdited() })
     }
 
-    /// Contrôle de cohérence kcal ↔ macros : ✓ cohérent, ⚠ incohérent, ou l'aide si les kcal sont vides.
-    @ViewBuilder
-    private var coherence: some View {
-        let m = d.macros
-        let est = m.p * 4 + m.c * 4 + m.f * 9
-        if Fmt.parse(d.kcal) != nil, est > 0 {
-            HStack(spacing: 6) {
-                Image(systemName: kcalLooksOff ? "exclamationmark.triangle.fill" : "checkmark")
-                    .font(.caption.weight(.bold))
-                Text("D'après les macros ≈ \(Text(Fmt.n0(est)).fontWeight(.bold)) kcal, \(kcalLooksOff ? "à vérifier" : "cohérent").")
-            }
-            .foregroundStyle(kcalLooksOff ? Theme.warn : Theme.ok)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background((kcalLooksOff ? Theme.warn : Theme.ok).opacity(0.1), in: .rect(cornerRadius: 8))
-        } else {
-            Text(hint).foregroundStyle(Theme.muted)
-        }
-    }
-
     private var kcalLooksOff: Bool {
-        let m = d.macros
         guard let k = Fmt.parse(d.kcal) else { return false }
-        return Nutrition.kcalLooksOff(kcal: k, macroKcal: m.p * 4 + m.c * 4 + m.f * 9)
+        return Nutrition.kcalLooksOff(kcal: k, macroKcal: d.macroKcal)
     }
 
     private var hint: String {
-        let m = d.macros
-        let est = m.p * 4 + m.c * 4 + m.f * 9
+        let est = d.macroKcal
         if let k = Fmt.parse(d.kcal), Nutrition.kcalLooksOff(kcal: k, macroKcal: est) {
-            return "⚠︎ \(Fmt.n0(k)) kcal ne colle pas avec les macros (environ \(Fmt.n0(est)) kcal). Vérifie l'étiquette, ou laisse « Kcal » vide pour utiliser le calcul."
+            return "⚠︎ \(Fmt.n0(k)) kcal ne colle pas avec les macros (environ \(Fmt.n0(est)) kcal). Vérifier l'étiquette, ou laisser « Kcal » vide pour utiliser le calcul."
         }
         if est > 0 {
-            return "D'après les macros : environ \(Fmt.n0(est)) kcal. Laisse « Kcal » vide pour utiliser ce calcul."
+            return "D'après les macros : environ \(Fmt.n0(est)) kcal. Laisser « Kcal » vide pour utiliser ce calcul."
         }
-        return "Recopie les valeurs de l'étiquette ou d'une table nutritionnelle (Ciqual par exemple), \(d.unit.per)."
+        return "Recopier les valeurs de l'étiquette ou d'une table nutritionnelle (Ciqual par exemple), \(d.unit.per)."
     }
 
-    private var deleteLabel: String {
-        guard let ing = target.ingredient, ing.recipeCount > 0 || ing.planCount > 0 else { return "Supprimer" }
-        return "Supprimer (\(IngredientsView.usageText(ing)))"
+    /// « Il sera retiré de 2 recettes et du planning. », s'il sert quelque part.
+    private var deleteUsage: String? {
+        guard let ing = target.ingredient, ing.recipeCount > 0 || ing.planCount > 0 else { return nil }
+        return "Il sera \(IngredientRows.usageText(ing))."
     }
 
     private func save() {
         let name = d.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { error = "Donne un nom à l'ingrédient."; nameFocused = true; return }
+        guard !name.isEmpty else { error = "Donner un nom à l'ingrédient."; nameFocused = true; return }
         let m = d.macros
         let ing: Ingredient
         if let existing = target.ingredient {

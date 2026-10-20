@@ -1,11 +1,11 @@
 import SwiftData
 import SwiftUI
 
-/// Barre d'outils commune à chaque onglet : objectifs + menu (objectifs, sauvegarde).
+/// Barre d'outils commune à chaque onglet : menu (objectifs, réglages, sauvegarde).
 /// `extra` : entrées propres à l'écran, affichées en tête du menu.
-/// `showTargets` : pastille des objectifs dans la barre (seulement sur le planning).
+/// `dayTotals` : bulle du total du jour (vue Jour, quand sa carte total est sortie de l'écran).
 struct AppChrome<Extra: View>: ViewModifier {
-    var showTargets = false
+    var dayTotals: Macros?
     var extra: Extra
 
     @Environment(AppSettings.self) private var settings
@@ -13,6 +13,7 @@ struct AppChrome<Extra: View>: ViewModifier {
     @Environment(\.modelContext) private var context
 
     @State private var editingTargets = false
+    @State private var editingSettings = false
     @State private var exportFile: BackupFile?
     @State private var exporting = false
     @State private var importing = false
@@ -22,17 +23,11 @@ struct AppChrome<Extra: View>: ViewModifier {
     func body(content: Content) -> some View {
         content
             .toolbar {
-                if showTargets {
+                if let t = dayTotals {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { editingTargets = true } label: {
-                            VStack(alignment: .trailing, spacing: 0) {
-                                Text("\(Fmt.n0(settings.targetKcal)) kcal").font(.subheadline.bold())
-                                MacroLine(m: settings.targets, unit: " g").font(.caption2).foregroundStyle(Theme.muted)
-                            }
-                            .monospacedDigit()
-                            .padding(.horizontal, 6)
-                        }
-                        .accessibilityLabel("Modifier mes objectifs")
+                        Button { editingTargets = true } label: { bubble(t) }
+                            .accessibilityLabel("Total du jour : \(Fmt.n0(t.kcal)) sur \(Fmt.n0(settings.targetKcal)) kilocalories")
+                            .accessibilityHint("Modifier mes objectifs")
                     }
                     ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 }
@@ -40,6 +35,7 @@ struct AppChrome<Extra: View>: ViewModifier {
                     Menu("Plus", systemImage: "ellipsis") {
                         Section { extra }
                         Button("Mes objectifs", systemImage: "target") { editingTargets = true }
+                        Button("Réglages", systemImage: "gearshape") { editingSettings = true }
                         Divider()
                         Button("Exporter les données", systemImage: "square.and.arrow.up") { export() }
                         Button("Importer une sauvegarde", systemImage: "square.and.arrow.down") { importing = true }
@@ -47,6 +43,7 @@ struct AppChrome<Extra: View>: ViewModifier {
                 }
             }
             .sheet(isPresented: $editingTargets) { TargetsSheet() }
+            .sheet(isPresented: $editingSettings) { SettingsSheet() }
             .fileExporter(isPresented: $exporting, document: exportFile, contentType: .json,
                           defaultFilename: "semainier-\(Date.now.formatted(.iso8601.year().month().day()))") { result in
                 if case .success = result { toast.show("Sauvegarde exportée") }
@@ -54,10 +51,11 @@ struct AppChrome<Extra: View>: ViewModifier {
             .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
                 readImport(result)
             }
-            .confirmationDialog("Remplacer toutes les données ?", isPresented: Binding(
+            .alert("Remplacer toutes les données ?", isPresented: Binding(
                 get: { pendingImport != nil }, set: { if !$0 { pendingImport = nil } }
-            ), titleVisibility: .visible) {
-                Button("Remplacer par la sauvegarde", role: .destructive) { applyImport() }
+            )) {
+                Button("Annuler", role: .cancel) {}
+                Button("Remplacer", role: .destructive) { applyImport() }
             } message: {
                 if let b = pendingImport {
                     Text("\(b.ingredients.count) ingrédients, \(b.recipes.count) recettes et \(b.plan.count) plats au planning. Les données actuelles seront effacées.")
@@ -68,6 +66,21 @@ struct AppChrome<Extra: View>: ViewModifier {
             } message: {
                 Text(importError ?? "")
             }
+    }
+
+    /// Total du jour, en `ok` / `depassement` selon la cible, en accent sinon.
+    private func bubble(_ m: Macros) -> some View {
+        let color = Seuil.couleurJour(m.kcal, objectif: settings.targetKcal, sinon: .accentColor)
+        return VStack(alignment: .trailing, spacing: 0) {
+            Text("\(Fmt.n0(m.kcal)) kcal")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(color)
+                .contentTransition(.numericText(value: m.kcal))
+            MacroLine(m: m, unit: " g").font(.system(size: 11)).foregroundStyle(Color.texte2)
+        }
+        .monospacedDigit()
+        .padding(.horizontal, 6)
+        .animation(.snappy, value: m.kcal)
     }
 
     private func export() {
@@ -106,8 +119,8 @@ struct AppChrome<Extra: View>: ViewModifier {
 extension View {
     func appChrome() -> some View { modifier(AppChrome(extra: EmptyView())) }
 
-    func appChrome<Extra: View>(showTargets: Bool = false, @ViewBuilder menu: () -> Extra) -> some View {
-        modifier(AppChrome(showTargets: showTargets, extra: menu()))
+    func appChrome<Extra: View>(dayTotals: Macros? = nil, @ViewBuilder menu: () -> Extra) -> some View {
+        modifier(AppChrome(dayTotals: dayTotals, extra: menu()))
     }
 }
 
@@ -123,22 +136,22 @@ struct TargetsSheet: View {
         NavigationStack {
             Form {
                 Group {
-                Section {
-                    LabeledContent("Kcal") {
-                        Text(Fmt.n0(kcal)).font(.body.weight(.semibold).width(.expanded)).monospacedDigit()
-                            .contentTransition(.numericText(value: kcal))
-                            .animation(.snappy, value: kcal)
+                    Section {
+                        LabeledContent("Kcal") {
+                            Text(Fmt.n0(kcal)).font(.body.bold()).monospacedDigit()
+                                .contentTransition(.numericText(value: kcal))
+                                .animation(.snappy, value: kcal)
+                        }
+                        NumberField(label: "Glucides (g)", text: $c, color: Color.glucTexte)
+                        NumberField(label: "Protéines (g)", text: $p, color: Color.protTexte)
+                        NumberField(label: "Lipides (g)", text: $f, color: Color.lipTexte)
+                    } footer: {
+                        Text(hint)
                     }
-                    NumberField(label: "Glucides", text: $c, color: Theme.carb, unit: "g")
-                    NumberField(label: "Protéines", text: $p, color: Theme.prot, unit: "g")
-                    NumberField(label: "Lipides", text: $f, color: Theme.fat, unit: "g")
-                } footer: {
-                    Text(hint)
                 }
-                }
-                .listRowBackground(Theme.surface)
+                .listRowBackground(Color.surface)
             }
-            .paperList()
+            .fondEcran()
             .navigationTitle("Mes objectifs")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -154,6 +167,7 @@ struct TargetsSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationBackground(Color.fond)
         .onAppear {
             p = Fmt.input(settings.targetP)
             c = Fmt.input(settings.targetC)
@@ -174,30 +188,31 @@ struct TargetsSheet: View {
     }
 }
 
-/// Ligne de formulaire : libellé (avec pastille de couleur pour une macro), valeur en Expanded, unité.
+/// Ligne de formulaire avec un champ numérique aligné à droite.
 struct NumberField: View {
     var label: String
     @Binding var text: String
     var color: Color = .primary
     var placeholder = "0"
-    var unit: String? = nil
+    /// Valeur signalée (ex. kcal incohérentes) : en Semibold dans cette couleur, avec un triangle.
+    var valueColor: Color? = nil
 
     var body: some View {
         LabeledContent {
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
+            HStack(spacing: 6) {
+                if let valueColor {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(valueColor)
+                        .accessibilityLabel("Incohérent avec les macros")
+                }
                 TextField(placeholder, text: $text)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
-                    .font(.body.weight(.semibold).width(.expanded))
                     .monospacedDigit()
-                    .foregroundStyle(Theme.ink)
-                if let unit { Text(unit).foregroundStyle(Theme.muted) }
+                    .fontWeight(valueColor == nil ? nil : .semibold)
+                    .foregroundStyle(valueColor ?? .primary)
             }
         } label: {
-            HStack(spacing: 8) {
-                if color != .primary { Circle().fill(color).frame(width: 8, height: 8) }
-                Text(label).foregroundStyle(Theme.ink)
-            }
+            Text(label).foregroundStyle(color)
         }
     }
 }
