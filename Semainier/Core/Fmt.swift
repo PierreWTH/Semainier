@@ -21,6 +21,12 @@ nonisolated enum Fmt {
     }
 
     /// Multiplicateur de portion : « ×1,0 », « ×1,15 ».
+    /// « 1 pièce », « 2 pièces » (plat qui se compte à la pièce).
+    static func pieces(_ v: Double) -> String {
+        let n = Int(v.rounded())
+        return "\(n) pièce\(n > 1 ? "s" : "")"
+    }
+
     static func x(_ v: Double) -> String {
         "×" + v.formatted(.number.locale(fr).precision(.fractionLength(1...2)))
     }
