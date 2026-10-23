@@ -4,53 +4,60 @@ import SwiftData
 /// Opérations sur le planning et les données, partagées entre les écrans.
 enum PlanActions {
     /// Duplique un plat (portion et quantités modifiées comprises) à la fin d'une case.
-    static func duplicate(_ entry: PlanEntry, date: DayKey, slot: Int, in context: ModelContext) {
-        guard let copy = entry.copy(to: date, slot: slot, order: nextOrder(date: date, slot: slot, in: context)) else { return }
+    static func duplicate(_ entry: PlanEntry, date: DayKey, slot: Repas, in context: ModelContext) {
+        guard let copy = entry.copy(to: date, repas: slot, order: nextOrder(date: date, slot: slot, in: context)) else { return }
         context.insert(copy)
     }
 
     /// Déplace un plat vers un autre jour et/ou repas ; il passe à la fin de la case d'arrivée.
-    static func move(_ entry: PlanEntry, date: DayKey, slot: Int, in context: ModelContext) {
-        guard entry.date != date || entry.slot != slot else { return }
+    static func move(_ entry: PlanEntry, date: DayKey, slot: Repas, in context: ModelContext) {
+        guard entry.date != date || entry.repas != slot else { return }
         entry.order = nextOrder(date: date, slot: slot, in: context)
         entry.date = date
-        entry.slot = slot
+        entry.repas = slot
     }
 
-    static func add(_ recipe: Recipe, date: DayKey, slot: Int, in context: ModelContext) {
-        context.insert(PlanEntry(date: date, slot: slot, recipe: recipe, order: nextOrder(date: date, slot: slot, in: context)))
+    /// `x` : portion, ou nombre de pièces pour une recette qui se compte à la pièce.
+    static func add(_ recipe: Recipe, x: Double = 1, date: DayKey, slot: Repas, in context: ModelContext) {
+        context.insert(PlanEntry(date: date, slot: slot.rawValue, recipe: recipe, x: x, order: nextOrder(date: date, slot: slot, in: context)))
     }
 
-    static func add(_ ingredient: Ingredient, qty: Double, date: DayKey, slot: Int, in context: ModelContext) {
-        context.insert(PlanEntry(date: date, slot: slot, ingredient: ingredient, qty: qty,
+    static func add(_ ingredient: Ingredient, qty: Double, date: DayKey, slot: Repas, in context: ModelContext) {
+        context.insert(PlanEntry(date: date, slot: slot.rawValue, ingredient: ingredient, qty: qty,
                                  order: nextOrder(date: date, slot: slot, in: context)))
     }
 
-    private static func nextOrder(date: DayKey, slot: Int, in context: ModelContext) -> Int {
+    static func add(_ free: FreeMeal, date: DayKey, slot: Repas, in context: ModelContext) {
+        context.insert(PlanEntry(date: date, slot: slot.rawValue, free: free, order: nextOrder(date: date, slot: slot, in: context)))
+    }
+
+    /// Ingrédients seuls enregistrés comme recette : ils laissent place à un seul plat de cette recette,
+    /// au rang du premier d'entre eux.
+    static func replace(_ entries: [PlanEntry], with recipe: Recipe, in context: ModelContext) {
+        guard let first = entries.min(by: { $0.order < $1.order }) else { return }
+        context.insert(PlanEntry(date: first.date, slot: first.slot, recipe: recipe, order: first.order))
+        entries.forEach(context.delete)
+    }
+
+    private static func nextOrder(date: DayKey, slot: Repas, in context: ModelContext) -> Int {
+        let slot = slot.rawValue
         let d = FetchDescriptor<PlanEntry>(predicate: #Predicate { $0.date == date && $0.slot == slot })
-        return ((try? context.fetch(d))?.map(\.order).max() ?? -1) + 1
+        return (context.lire(d).map(\.order).max() ?? -1) + 1
     }
 
     /// Passage de la « semaine type » au planning daté : chaque plat est placé à la prochaine
     /// occurrence de son jour (aujourd'hui compris), donc sur les 7 jours à venir.
     static func migrateLegacyDays(in context: ModelContext, today: DayKey = Days.today) {
         let d = FetchDescriptor<PlanEntry>(predicate: #Predicate { $0.date == 0 })
-        for e in (try? context.fetch(d)) ?? [] {
+        for e in context.lire(d) {
             e.date = Days.next(weekday: e.day, from: today)
         }
     }
 
-    /// Ajuste les portions d'un jour pour viser l'objectif. Renvoie false si le jour est vide.
-    @discardableResult
-    static func fit(_ dayEntries: [PlanEntry], target: Double) -> Bool {
-        let kcal = dayEntries.map(\.totals).sum.kcal
-        guard let xs = Nutrition.fitted(dayEntries.map(\.x), dayKcal: kcal, target: target) else { return false }
-        for (e, x) in zip(dayEntries, xs) { e.x = x }
-        return true
-    }
-
     /// Remplace le contenu des jours cibles par celui du jour source.
-    static func copy(day source: DayKey, to targets: Set<DayKey>, entries: [PlanEntry], in context: ModelContext) {
+    static func copy(day source: DayKey, to targets: Set<DayKey>, in context: ModelContext) {
+        let days = Array(targets) + [source]
+        let entries = context.lire(FetchDescriptor<PlanEntry>(predicate: #Predicate { days.contains($0.date) }))
         let model = entries.on(source)
         for d in targets where d != source {
             entries.filter { $0.date == d }.forEach(context.delete)
@@ -68,11 +75,11 @@ enum PlanActions {
 
     static func ingredient(barcode: String, in context: ModelContext) -> Ingredient? {
         let d = FetchDescriptor<Ingredient>(predicate: #Predicate { $0.barcode == barcode })
-        return try? context.fetch(d).first
+        return context.lire(d).first
     }
 
     static func settings(in context: ModelContext) -> AppSettings {
-        if let s = try? context.fetch(FetchDescriptor<AppSettings>()).first { return s }
+        if let s = context.lire(FetchDescriptor<AppSettings>()).first { return s }
         let s = AppSettings()
         context.insert(s)
         return s
