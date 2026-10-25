@@ -69,10 +69,28 @@ final class Ingredient {
     var planCount: Int { planEntries?.count ?? 0 }
 }
 
+extension Ingredient {
+    /// Ingrédients filtrés par `query` et triés par nom, en une section par rayon, dans l'ordre du magasin
+    /// (rayons vides omis).
+    static func parRayon(_ list: [Ingredient], query: String) -> [(rayon: Rayon, items: [Ingredient])] {
+        let found = list.filtres(query, nom: \.name)
+        return Rayon.allCases.compactMap { rayon in
+            let items = found.filter { $0.rayon == rayon }
+            return items.isEmpty ? nil : (rayon, items)
+        }
+    }
+}
+
 @Model
 final class Recipe {
     var uid: String = UUID().uuidString
     var name: String = ""
+    /// Se compte à la pièce (burger) plutôt qu'à la portion (pâtes) : les quantités sont pour 1 pièce,
+    /// et le multiplicateur d'un plat au planning est un nombre de pièces.
+    var byPiece = false
+    /// Se prépare à l'avance (batch cooking) : le plat apparaît dans Cuisine › « À préparer ».
+    /// Un shaker ou une tartine se font au moment : non par défaut.
+    var batch = false
 
     @Relationship(deleteRule: .cascade, inverse: \RecipeItem.recipe)
     var items: [RecipeItem]? = []
@@ -89,7 +107,7 @@ final class Recipe {
         (items ?? []).sorted { $0.order < $1.order }
     }
 
-    /// Totaux pour 1 portion.
+    /// Totaux pour 1 portion (ou 1 pièce).
     var totals: Macros {
         (items ?? []).map(\.macros).sum
     }
@@ -132,7 +150,8 @@ final class PlanEntry {
     /// Multiplicateur de portion (1 = portion de base).
     var x: Double = 1
     var order: Int = 0
-    /// Une entrée est soit une recette, soit un ingrédient seul avec sa quantité.
+    /// Une entrée est soit une recette, soit un ingrédient seul avec sa quantité,
+    /// soit un repas libre (nom et kcal estimées, macros facultatives).
     var recipe: Recipe?
     var ingredient: Ingredient?
     /// Quantité de l'ingrédient seul (g, ml ou pièces).
@@ -140,6 +159,12 @@ final class PlanEntry {
     /// Quantités modifiées pour ce plat uniquement (uid de l'ingrédient → quantité pour 1 portion).
     /// La recette elle-même n'est pas touchée.
     var overrides: [String: Double] = [:]
+    /// Repas libre : son nom (nil pour une recette ou un ingrédient) et ses valeurs estimées.
+    var freeName: String?
+    var freeKcal: Double = 0
+    var freeP: Double = 0
+    var freeC: Double = 0
+    var freeF: Double = 0
 
     init(date: DayKey, slot: Int, recipe: Recipe, x: Double = 1, order: Int = 0) {
         self.date = date
@@ -158,8 +183,49 @@ final class PlanEntry {
         self.order = order
     }
 
-    var title: String { recipe?.name ?? ingredient?.name ?? "" }
-    var isValid: Bool { recipe != nil || ingredient != nil }
+    init(date: DayKey, slot: Int, free: FreeMeal, order: Int = 0) {
+        self.date = date
+        self.slot = slot
+        self.order = order
+        self.free = free
+    }
+
+    /// Ce qu'est le plat : une recette, un ingrédient seul ou un repas libre (dans cet ordre de priorité).
+    enum Kind {
+        case recette(Recipe)
+        case ingredient(Ingredient, qty: Double)
+        case libre(FreeMeal)
+        /// Recette ou ingrédient supprimé : l'entrée ne compte plus.
+        case vide
+    }
+
+    var kind: Kind {
+        if let recipe { return .recette(recipe) }
+        if let ingredient { return .ingredient(ingredient, qty: qty) }
+        if let free { return .libre(free) }
+        return .vide
+    }
+
+    var repas: Repas {
+        get { Repas(slot: slot) }
+        set { slot = newValue.rawValue }
+    }
+
+    var title: String { recipe?.name ?? ingredient?.name ?? freeName ?? "" }
+    var isValid: Bool { recipe != nil || ingredient != nil || freeName != nil }
+    var isFree: Bool { recipe == nil && ingredient == nil && freeName != nil }
+
+    /// Valeurs du repas libre ; nil pour une recette ou un ingrédient.
+    var free: FreeMeal? {
+        get { isFree ? FreeMeal(name: freeName ?? "", kcal: freeKcal, p: freeP, c: freeC, f: freeF) : nil }
+        set {
+            freeName = newValue?.name
+            freeKcal = newValue?.kcal ?? 0
+            freeP = newValue?.p ?? 0
+            freeC = newValue?.c ?? 0
+            freeF = newValue?.f ?? 0
+        }
+    }
 
     /// Quantité d'une ligne de la recette pour 1 portion, en tenant compte des modifications de ce plat.
     func qty(for item: RecipeItem) -> Double {
@@ -182,33 +248,47 @@ final class PlanEntry {
     }
 
     var totals: Macros {
-        if let recipe {
-            return (recipe.items ?? []).map { $0.ingredient?.macros(qty: qty(for: $0)) ?? .zero }.sum * x
+        switch kind {
+        case .recette(let r): (r.items ?? []).map { $0.ingredient?.macros(qty: qty(for: $0)) ?? .zero }.sum * x
+        case .ingredient(let g, let q): g.macros(qty: q) * x
+        case .libre(let m): Macros(kcal: m.kcal, p: m.p, c: m.c, f: m.f)
+        case .vide: .zero
         }
-        if let ingredient { return ingredient.macros(qty: qty) * x }
-        return .zero
     }
 
     /// Quantité par ingrédient pour cette entrée (liste de courses).
     var shoppingLines: [(ingredient: Ingredient, qty: Double)] {
-        if let recipe {
-            return (recipe.items ?? []).compactMap { it in it.ingredient.map { ($0, qty(for: it) * x) } }
+        switch kind {
+        case .recette(let r): (r.items ?? []).compactMap { it in it.ingredient.map { ($0, qty(for: it) * x) } }
+        case .ingredient(let g, let q): [(g, q * x)]
+        case .libre, .vide: []
         }
-        if let ingredient { return [(ingredient, qty * x)] }
-        return []
     }
 
     /// Duplique l'entrée sur un autre jour (et éventuellement un autre repas).
-    func copy(to date: DayKey, slot: Int? = nil, order: Int? = nil) -> PlanEntry? {
-        let slot = slot ?? self.slot, order = order ?? self.order
-        if let recipe {
-            let e = PlanEntry(date: date, slot: slot, recipe: recipe, x: x, order: order)
+    func copy(to date: DayKey, repas: Repas? = nil, order: Int? = nil) -> PlanEntry? {
+        let slot = repas?.rawValue ?? self.slot, order = order ?? self.order
+        switch kind {
+        case .recette(let r):
+            let e = PlanEntry(date: date, slot: slot, recipe: r, x: x, order: order)
             e.overrides = overrides
             return e
+        case .ingredient(let g, let q): return PlanEntry(date: date, slot: slot, ingredient: g, qty: q, x: x, order: order)
+        case .libre(let m): return PlanEntry(date: date, slot: slot, free: m, order: order)
+        case .vide: return nil
         }
-        if let ingredient { return PlanEntry(date: date, slot: slot, ingredient: ingredient, qty: qty, x: x, order: order) }
-        return nil
     }
+}
+
+/// Repas libre : on estime les kcal (restaurant, repas plaisir) sans recette.
+/// Les macros sont facultatives (0 = non précisées). Absent de la liste de courses.
+nonisolated struct FreeMeal: Equatable {
+    static let defaultName = "Repas libre"
+    var name: String
+    var kcal: Double
+    var p = 0.0, c = 0.0, f = 0.0
+
+    var hasMacros: Bool { p > 0 || c > 0 || f > 0 }
 }
 
 @Model
@@ -220,6 +300,8 @@ final class AppSettings {
     var shopDays: [Int] = [0, 1, 2, 3, 4, 5, 6]
     /// uid des ingrédients cochés dans la liste de courses.
     var checked: [String] = []
+    /// Vue Semaine : du lundi au dimanche plutôt que 7 jours à partir d'aujourd'hui.
+    var weekFromMonday = false
 
     init() {}
 
@@ -244,8 +326,14 @@ extension Array where Element == PlanEntry {
     func on(_ date: DayKey) -> [PlanEntry] {
         filter { $0.date == date }.sorted { ($0.slot, $0.order) < ($1.slot, $1.order) }
     }
+}
 
-    func totals(_ date: DayKey) -> Macros {
-        filter { $0.date == date }.map(\.totals).sum
+extension PlanEntry {
+    /// Plats des 7 prochains jours (courses, « À préparer »), avec un jour de marge de chaque côté :
+    /// la requête reste juste même si l'écran n'a pas été recréé depuis minuit. Les vues filtrent ensuite
+    /// sur les jours choisis.
+    static var prochainsJours: Predicate<PlanEntry> {
+        let start = Days.adding(-1, to: Days.today), end = Days.adding(8, to: Days.today)
+        return #Predicate { $0.date >= start && $0.date < end }
     }
 }

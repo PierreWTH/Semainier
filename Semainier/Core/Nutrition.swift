@@ -31,8 +31,6 @@ nonisolated enum Rayon: String, Codable, CaseIterable, Identifiable {
 nonisolated enum Week {
     static let days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
     static let short = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
-    static let slots = ["Petit-déjeuner", "Déjeuner", "Collation", "Dîner"]
-    static let slotsShort = ["Petit-déj", "Déjeuner", "Collation", "Dîner"]
 
     /// Index du jour de la semaine, 0 = lundi.
     static func weekdayIndex(_ date: Date, calendar: Calendar = .current) -> Int {
@@ -61,8 +59,26 @@ nonisolated extension Sequence where Element == Macros {
     var sum: Macros { reduce(.zero, +) }
 }
 
-nonisolated enum DayStatus {
-    case none, ok, warn, bad
+/// Où en est un jour par rapport à l'objectif kcal.
+nonisolated enum EtatJour {
+    case dansLaCible, auDela, sousObjectif
+
+    var libelle: String {
+        switch self {
+        case .dansLaCible: "dans la cible"
+        case .auDela: "au-delà de l'objectif"
+        case .sousObjectif: "sous l'objectif"
+        }
+    }
+}
+
+/// Résumé d'une semaine : moyenne des jours remplis, et jours dans la cible.
+nonisolated struct StatsSemaine: Equatable {
+    /// Moyenne des kcal des jours qui ont au moins un plat ; 0 si aucun.
+    var moyenne: Double
+    var dansLaCible: Int
+    /// Aucun jour rempli.
+    var vide: Bool
 }
 
 nonisolated enum Nutrition {
@@ -71,22 +87,7 @@ nonisolated enum Nutrition {
         per * (unit == .pc ? qty : qty / 100)
     }
 
-    /// Écart ≤ 3 % = ok, ≤ 8 % = warn, au-delà = bad. Jour vide = none.
-    static func status(kcal: Double, target: Double) -> DayStatus {
-        guard kcal > 0 else { return .none }
-        let r = abs(kcal - target) / max(target, 1)
-        return r <= 0.03 ? .ok : r <= 0.08 ? .warn : .bad
-    }
-
-    /// Nouveaux multiplicateurs pour qu'un jour tombe sur l'objectif :
-    /// x × (objectif / total), arrondi au 0,05, minimum 0,1. Nil si le jour est vide.
-    static func fitted(_ xs: [Double], dayKcal: Double, target: Double) -> [Double]? {
-        guard dayKcal > 0 else { return nil }
-        let k = target / dayKcal
-        return xs.map { max(0.1, ($0 * k * 20).rounded() / 20) }
-    }
-
-    /// Stepper −/+ : pas de 0,1, minimum 0,1.
+    /// Stepper −/+ de `PortionStepper` : pas de 0,1, minimum 0,1.
     static func stepped(_ x: Double, by delta: Int) -> Double {
         max(0.1, ((x + 0.1 * Double(delta)) * 100).rounded() / 100)
     }
@@ -115,11 +116,27 @@ nonisolated enum Nutrition {
         return d > 20 && d > 0.15 * max(kcal, macroKcal)
     }
 
-    /// Dépassement d'un objectif de macro : plus de 3 % au-dessus.
-    static let overTolerance = 0.03
+    /// Au-delà de +3 % de l'objectif, une valeur est en dépassement. Règle unique de l'appli (barres, chiffres, jours).
+    static let seuilDepassement = 1.03
 
-    static func isOver(_ value: Double, target: Double) -> Bool {
-        target > 0 && value > target * (1 + overTolerance)
+    static func depasse(_ valeur: Double, objectif: Double) -> Bool {
+        objectif > 0 && valeur / objectif > seuilDepassement
+    }
+
+    /// |ratio − 1| ≤ 3 % : dans la cible ; au-delà de +3 % : au-delà ; sinon sous l'objectif (jour vide compris).
+    static func etatJour(kcal: Double, objectif: Double) -> EtatJour {
+        guard objectif > 0, kcal > 0 else { return .sousObjectif }
+        let ratio = kcal / objectif
+        if ratio > seuilDepassement { return .auDela }
+        return abs(ratio - 1) <= seuilDepassement - 1 ? .dansLaCible : .sousObjectif
+    }
+
+    /// Les jours vides ne comptent pas dans la moyenne.
+    static func statsSemaine(_ kcal: [Double], objectif: Double) -> StatsSemaine {
+        let remplis = kcal.filter { $0 > 0 }
+        return StatsSemaine(moyenne: remplis.isEmpty ? 0 : remplis.reduce(0, +) / Double(remplis.count),
+                            dansLaCible: kcal.filter { etatJour(kcal: $0, objectif: objectif) == .dansLaCible }.count,
+                            vide: remplis.isEmpty)
     }
 
     /// Somme des quantités par ingrédient (liste de courses).

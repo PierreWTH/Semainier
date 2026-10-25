@@ -21,7 +21,7 @@ struct PlanEntryTests {
 
     @Test func ingredientEntryTotalsAndShopping() {
         let i = skyr()
-        PlanActions.add(i, qty: 250, date: 20261014, slot: 2, in: context)
+        PlanActions.add(i, qty: 250, date: 20261014, slot: .collation, in: context)
         let e = try! context.fetch(FetchDescriptor<PlanEntry>()).first!
         #expect(e.title == "Skyr")
         #expect(e.totals.kcal == 160)                   // kcal de l'étiquette : 250 g × 64 / 100
@@ -31,9 +31,8 @@ struct PlanEntryTests {
 
     @Test func copyDayKeepsIngredientEntries() throws {
         let i = skyr()
-        PlanActions.add(i, qty: 150, date: 20261012, slot: 2, in: context)
-        let entries = try context.fetch(FetchDescriptor<PlanEntry>())
-        PlanActions.copy(day: 20261012, to: [20261015], entries: entries, in: context)
+        PlanActions.add(i, qty: 150, date: 20261012, slot: .collation, in: context)
+        PlanActions.copy(day: 20261012, to: [20261015], in: context)
         let copied = try context.fetch(FetchDescriptor<PlanEntry>()).filter { $0.date == 20261015 }
         #expect(copied.count == 1)
         #expect(copied[0].ingredient?.name == "Skyr" && copied[0].qty == 150)
@@ -41,7 +40,7 @@ struct PlanEntryTests {
 
     @Test func deletingIngredientRemovesItFromPlan() throws {
         let i = skyr()
-        PlanActions.add(i, qty: 100, date: 20261013, slot: 0, in: context)
+        PlanActions.add(i, qty: 100, date: 20261013, slot: .petitDejeuner, in: context)
         try context.save()
         PlanActions.delete(i, settings: PlanActions.settings(in: context), in: context)
         try context.save()
@@ -50,7 +49,7 @@ struct PlanEntryTests {
 
     @Test func backupRoundTripWithIngredientEntry() throws {
         let i = skyr()
-        PlanActions.add(i, qty: 200, date: 20261016, slot: 3, in: context)
+        PlanActions.add(i, qty: 200, date: 20261016, slot: .diner, in: context)
         try context.save()
         let data = try JSONEncoder().encode(Backup.make(from: context))
         let backup = try JSONDecoder().decode(Backup.self, from: data)
@@ -60,6 +59,80 @@ struct PlanEntryTests {
         let restored = try context.fetch(FetchDescriptor<PlanEntry>())
         #expect(restored.count == 1)
         #expect(restored[0].ingredient?.name == "Skyr" && restored[0].qty == 200 && restored[0].date == 20261016)
+    }
+
+    @Test func loneIngredientsBecomeOneRecipeDish() throws {
+        let i = skyr()
+        let other = Ingredient(name: "Banane", unit: .g, kcal: 90, p: 1, c: 20, f: 0.3, rayon: .fruitsLegumes)
+        context.insert(other)
+        PlanActions.add(i, qty: 150, date: 20261020, slot: .petitDejeuner, in: context)
+        PlanActions.add(other, qty: 120, date: 20261020, slot: .petitDejeuner, in: context)
+        let lone = try context.fetch(FetchDescriptor<PlanEntry>()).sorted { $0.order < $1.order }
+        lone[1].x = 2
+        let kcalBefore = lone.map(\.totals).sum.kcal
+
+        let r = Recipe(name: "Bol skyr banane")
+        context.insert(r)
+        for (n, (g, q)) in LoneToRecipe(entries: lone).prefill.enumerated() {
+            let item = RecipeItem(ingredient: g, qty: q, order: n)
+            context.insert(item)
+            item.recipe = r
+        }
+        PlanActions.replace(lone, with: r, in: context)
+        try context.save()
+
+        let left = try context.fetch(FetchDescriptor<PlanEntry>())
+        #expect(left.count == 1)
+        #expect(left[0].recipe?.name == "Bol skyr banane" && left[0].slot == 0 && left[0].date == 20261020)
+        #expect(abs(left[0].totals.kcal - kcalBefore) < 0.001)   // portion ×2 reprise dans la recette
+    }
+
+    @Test func pieceRecipeMultipliesAndSurvivesBackup() throws {
+        let i = skyr()
+        let r = Recipe(name: "Burger")
+        r.byPiece = true
+        r.batch = true
+        context.insert(r)
+        let item = RecipeItem(ingredient: i, qty: 100, order: 0)
+        context.insert(item)
+        item.recipe = r
+        PlanActions.add(r, x: 2, date: 20261021, slot: .diner, in: context)
+        let e = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
+        #expect(e.totals.kcal == 128)                   // 2 × 64
+        #expect(e.shoppingLines.first?.qty == 200)
+        #expect(Fmt.pieces(e.x) == "2 pièces" && Fmt.pieces(1) == "1 pièce")
+        try context.save()
+
+        let data = try JSONEncoder().encode(Backup.make(from: context))
+        try JSONDecoder().decode(Backup.self, from: data).restore(into: context)
+        let restored = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
+        #expect(restored.recipe?.byPiece == true && restored.recipe?.batch == true && restored.x == 2)
+    }
+
+    @Test func freeMealCountsKcalButNotShopping() throws {
+        PlanActions.add(FreeMeal(name: "Pizza", kcal: 1200), date: 20261017, slot: .diner, in: context)
+        let e = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
+        #expect(e.isValid && e.isFree)
+        #expect(e.title == "Pizza")
+        #expect(e.totals == Macros(kcal: 1200))       // sans macros précisées
+        #expect(e.shoppingLines.isEmpty)
+        #expect(e.free?.hasMacros == false)
+    }
+
+    @Test func freeMealCopyAndBackupKeepValues() throws {
+        let meal = FreeMeal(name: "Burger", kcal: 950, p: 40, c: 80, f: 50)
+        PlanActions.add(meal, date: 20261018, slot: .dejeuner, in: context)
+        let e = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
+        PlanActions.duplicate(e, date: 20261019, slot: .diner, in: context)
+        try context.save()
+
+        let data = try JSONEncoder().encode(Backup.make(from: context))
+        try JSONDecoder().decode(Backup.self, from: data).restore(into: context)
+        let restored = try context.fetch(FetchDescriptor<PlanEntry>()).sorted { $0.date < $1.date }
+        #expect(restored.count == 2)
+        #expect(restored.allSatisfy { $0.free == meal })
+        #expect(restored.map(\.date) == [20261018, 20261019])
+        #expect(restored[0].totals == Macros(kcal: 950, p: 40, c: 80, f: 50))
     }
 }
 
@@ -156,10 +229,10 @@ struct MoveTests {
         let context = ModelContext(try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true)))
         let r = Recipe(name: "Skyr")
         context.insert(r)
-        PlanActions.add(r, date: 20261016, slot: 2, in: context)   // déjà un plat le vendredi
-        PlanActions.add(r, date: 20261015, slot: 2, in: context)
+        PlanActions.add(r, date: 20261016, slot: .collation, in: context)   // déjà un plat le vendredi
+        PlanActions.add(r, date: 20261015, slot: .collation, in: context)
         let thursday = try context.fetch(FetchDescriptor<PlanEntry>()).first { $0.date == 20261015 }!
-        PlanActions.move(thursday, date: 20261016, slot: 2, in: context)
+        PlanActions.move(thursday, date: 20261016, slot: .collation, in: context)
         #expect(thursday.date == 20261016 && thursday.slot == 2 && thursday.order == 1)
     }
 
@@ -174,7 +247,7 @@ struct MoveTests {
         let e = PlanEntry(date: 20261015, slot: 0, recipe: r, x: 1.5)
         context.insert(e)
         e.setQty(450, for: it)                       // 300 g par portion
-        PlanActions.duplicate(e, date: 20261016, slot: 0, in: context)
+        PlanActions.duplicate(e, date: 20261016, slot: .petitDejeuner, in: context)
         let all = try context.fetch(FetchDescriptor<PlanEntry>())
         #expect(all.count == 2)
         let copy = all.first { $0.date == 20261016 }!
