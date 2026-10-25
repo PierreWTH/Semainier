@@ -1,434 +1,623 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// Agenda : jours en colonnes, repas en lignes, colonne des repas fixe à gauche.
-/// Tirer la grille vers la droite au-delà du premier jour étire une colonne « veille » entre les repas
-/// et le premier jour ; tiré assez loin, au relâcher on passe sur les 7 jours précédents.
-/// Tirer au-delà du dernier jour charge les 7 suivants.
+/// Agenda : jours en colonnes, repas en lignes, dans une grille UIKit (`WeekGrid`) qui défile dans les deux sens et
+/// garde l'en-tête des jours (total et jauge) figé en haut. Une semaine à la fois ; tirer au bord passe à la voisine.
+/// Pincer bascule vers la vue d'ensemble : les 7 jours dans la largeur, kcal et nombre de plats par repas.
 struct WeekView: View {
-    var entries: [PlanEntry]
+    var index: PlanIndex
     /// Jours affichés, dans l'ordre.
     var days: [DayKey]
     var selected: DayKey
-    var ns: Namespace.ID
     var openDay: (DayKey) -> Void
-    var add: (DayKey, Int) -> Void
-    /// Charger 7 jours de plus : `true` avant, `false` après.
-    var extend: (_ backward: Bool) -> Void
+    var add: (DayKey, Repas) -> Void
+    /// Passer à la semaine voisine : `true` la suivante, `false` la précédente.
+    var shift: (_ forward: Bool) -> Void
+    /// Change quand la grille doit revenir sur `selected` (bouton du jour).
+    var recenter: Int
+    /// Aujourd'hui est-il à l'écran dans la grille ?
+    var todayVisible: (Bool) -> Void
+    /// Vue d'ensemble : les 7 jours tiennent dans la largeur, chaque case résumée.
+    @Binding var overview: Bool
 
     @Environment(AppSettings.self) private var settings
     @Environment(\.modelContext) private var context
-    @State private var scrollX: CGFloat = 0
+    @Environment(\.dynamicTypeSize) private var typeSize
     /// Case survolée pendant un glisser-déposer.
     @State private var dropTarget: SlotRef?
     @State private var dropCount = 0
+    /// Tirer en cours vers la semaine voisine (pastille au bord de l'écran).
+    @State private var pull: WeekPull?
+    @State private var meter = PullMeter()
+    /// Plat en cours de glisser, retenu dès le départ du geste.
+    @State private var drag = DragSource()
+    /// Cases dont les ingrédients seuls regroupés sont dépliés.
+    @State private var unfolded: Set<SlotRef> = []
     /// Recette ou ingrédient ouvert depuis le menu d'un plat.
     @State private var viewingRecipe: RecipeEditTarget?
     @State private var viewingIngredient: IngredientEditTarget?
+    @State private var edition: EditionPlat?
+    @State private var savingLone: LoneToRecipe?
+    @State private var editingTargets = false
     @State private var width: CGFloat = 390
-    @State private var position: ScrollPosition
-    /// Distance tirée au-delà du bord gauche / droit, et seuil franchi.
-    @State private var pull = EdgePull()
-    @State private var armed: Bool?
-    @State private var interacting = false
 
-    private let labelWidth: CGFloat = 70
-    /// Distance à tirer pour charger d'autres jours.
-    private let pullThreshold: CGFloat = 70
+    /// À partir de ce nombre d'ingrédients seuls dans une case, ils tiennent sur une seule tuile repliée.
+    private let groupFrom = 3
     private let today = Days.today
+    private let size = TaillesGrille()
 
-    private var colWidth: CGFloat { max(128, (width - labelWidth) / 7 - 1) }
+    /// 162 pt : deux jours entiers et le début du troisième sur iPhone.
+    /// Aux tailles d'accessibilité, une colonne et demie visible plutôt qu'un texte réduit.
+    /// Vue d'ensemble : les 7 colonnes dans la largeur.
+    private var colWidth: CGFloat {
+        if overview { return width / 7 - 1 }
+        return typeSize.isAccessibilitySize ? max(162, width / 1.5 - 1) : 162
+    }
     /// Largeur d'une colonne avec son trait de séparation.
     private var colStep: CGFloat { colWidth + 1 }
 
-
-    init(entries: [PlanEntry], days: [DayKey], selected: DayKey, ns: Namespace.ID,
-         openDay: @escaping (DayKey) -> Void, add: @escaping (DayKey, Int) -> Void,
-         extend: @escaping (Bool) -> Void) {
-        self.entries = entries
+    init(index: PlanIndex, days: [DayKey], selected: DayKey,
+         openDay: @escaping (DayKey) -> Void, add: @escaping (DayKey, Repas) -> Void,
+         shift: @escaping (Bool) -> Void, recenter: Int = 0, todayVisible: @escaping (Bool) -> Void = { _ in },
+         overview: Binding<Bool> = .constant(false)) {
+        self.index = index
         self.days = days
         self.selected = selected
-        self.ns = ns
         self.openDay = openDay
         self.add = add
-        self.extend = extend
-        // La grille s'ouvre sur la colonne du jour sélectionné (colonnes de 128 pt sur iPhone),
-        // pour que la pastille du jour revienne se poser au bon endroit lors de la bascule.
-        let index = days.firstIndex(of: selected) ?? 0
-        _position = State(initialValue: ScrollPosition(x: CGFloat(index) * 129))
+        self.shift = shift
+        self.recenter = recenter
+        self.todayVisible = todayVisible
+        self._overview = overview
     }
 
     var body: some View {
         let target = settings.targetKcal
-        let totals = days.map { entries.totals($0) }
-        let filled = totals.filter { $0.kcal > 0 }
-        let avg = filled.isEmpty ? 0 : filled.map(\.kcal).reduce(0, +) / Double(filled.count)
-        let onTarget = totals.filter { Nutrition.status(kcal: $0.kcal, target: target) == .ok }.count
+        let semaine = index.stats(days, objectif: target)
 
-        VStack(alignment: .leading, spacing: 16) {
-            stats(avg, onTarget, filled.isEmpty, totals: totals)
-
-            grid()
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-
-            Text("Touche un jour ou un plat pour ouvrir le détail. Tire la grille au-delà du premier ou du dernier jour pour en voir plus.")
-                .font(.footnote).foregroundStyle(Theme.muted)
+        VStack(alignment: .leading, spacing: 0) {
+            // La moyenne reste fixe au-dessus de la grille : ni le défilement, ni le changement de semaine, ni la
+            // bascule de zoom ne la déplacent (seuls ses chiffres changent).
+            stats(semaine.moyenne, semaine.dansLaCible, semaine.vide).padding(.bottom, 12)
+            WeekGrid(days: days, selected: selected, width: width, colWidth: colWidth,
+                     headerHeight: overview ? size.overviewHeader : size.header, bandHeight: size.band, layoutKey: layoutKey,
+                     cellKey: cellKey, recenter: recenter,
+                     header: { AnyView(header($0, target)) },
+                     band: { AnyView(band($0, slot: $1)) },
+                     cell: { overview ? AnyView(overviewCell(day: $0, slot: $1)) : AnyView(cell(day: $0, slot: $1, measuring: $2)) },
+                     footer: AnyView(footer),
+                     shift: shift,
+                     visible: { [today] in todayVisible($0.contains(today)) },
+                     canDrop: { [overview] in !overview && drag.uid != nil },
+                     hover: { ref in withAnimation(.snappy) { dropTarget = ref } },
+                     drop: dropped,
+                     pull: { p in withAnimation(.snappy) { pull = p } },
+                     meter: meter,
+                     zoom: { out in if overview != out { overview = out } })
+                .frame(maxHeight: .infinity)
+                // Une pastille par bord, chacune apparaît sur place : un seul emplacement dont l'alignement changeait
+                // dans l'animation la faisait traverser l'écran depuis l'autre bord.
+                .overlay(alignment: .leading) {
+                    if let pull, !pull.forward { pullBadge(pull).padding(.horizontal, Espace.marge) }
+                }
+                .overlay(alignment: .trailing) {
+                    if let pull, pull.forward { pullBadge(pull).padding(.horizontal, Espace.marge) }
+                }
+                // Une vibration au seuil : lâcher maintenant change de semaine.
+                .sensoryFeedback(trigger: pull?.armed == true) { _, armed in armed ? .impact(weight: .medium) : nil }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .sheet(item: $viewingRecipe) { RecipeEditor(recipe: $0.recipe) }
         .sheet(item: $viewingIngredient) { IngredientEditor(target: $0) }
+        .saveLoneAsRecipe($savingLone)
+        .sheet(isPresented: $editingTargets) { TargetsSheet() }
+        .editionPlat($edition)
     }
 
-    /// Moyenne en chiffre héros, ouverte par le filet ; à droite, un point par jour (couleur de sa jauge).
-    private func stats(_ avg: Double, _ onTarget: Int, _ empty: Bool, totals: [Macros]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LabelRule()
-            HStack(alignment: .bottom) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(empty ? "—" : Fmt.n0(avg)).heroNumber(44).foregroundStyle(Theme.ink)
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                    Text("kcal / jour\nen moyenne").font(.footnote).foregroundStyle(Theme.muted)
-                        .fixedSize()
-                }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 6) {
-                    HStack(spacing: 4) {
-                        ForEach(Array(totals.prefix(14).enumerated()), id: \.offset) { _, t in
-                            let c = Theme.gauge(kcal: t.kcal, target: settings.targetKcal)
-                            Circle().fill(c == Theme.ink ? Theme.muted : c).frame(width: 7, height: 7)
-                        }
-                    }
-                    Text("\(onTarget)/\(days.count) dans la cible ±3 %").sectionLabel()
-                        .lineLimit(1).fixedSize()
-                }
-            }
+    /// « 2 378 / 2 600 kcal en moyenne » (moyenne en `ok` / `depassement` selon la cible) et « 1 / 7 dans la cible ».
+    /// L'objectif n'a pas de bulle en vue Semaine : il est ici, et toucher la ligne ouvre « Mes objectifs ».
+    private func stats(_ avg: Double, _ onTarget: Int, _ empty: Bool) -> some View {
+        let target = settings.targetKcal
+        let average = HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(empty ? "—" : Fmt.n0(avg)).police(.moyenneSemaine)
+                .foregroundStyle(empty ? Color.texte3 : Seuil.couleurJour(avg, objectif: target, sinon: .texte))
+            Text("/ \(Fmt.n0(target)) kcal en moyenne").font(.system(size: size.statsUnit)).foregroundStyle(Color.texte2)
         }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func grid() -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(horizontalSpacing: 1, verticalSpacing: 1) {
-                GridRow {
-                    pinned(Color.clear.frame(height: 1))
-                    ForEach(days, id: \.self) { header($0) }
+        let count = Text("\(onTarget) / \(days.count) dans la cible")
+            .font(.system(size: size.statsCount)).foregroundStyle(Color.texte2)
+        return Button { editingTargets = true } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    average
+                    Spacer(minLength: 8)
+                    count
                 }
-                ForEach(0..<4, id: \.self) { s in
-                    GridRow {
-                        pinned(slotLabel(Week.slotsShort[s]))
-                        ForEach(days, id: \.self) { cell(day: $0, slot: s) }
-                    }
-                }
-                GridRow {
-                    pinned(slotLabel("Total"), center: true)
-                    ForEach(days, id: \.self) { d in foot(d, entries.totals(d)) }
+                VStack(alignment: .leading, spacing: 2) {
+                    average
+                    count
                 }
             }
-            .background(Theme.line)
-            // Hauteur idéale par ligne : les cellules en maxHeight .infinity remplissent alors leur ligne.
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .scrollPosition($position)
-        .onScrollGeometryChange(for: EdgePull.self) { g in
-            let x = g.contentOffset.x + g.contentInsets.leading
-            let maxX = max(0, g.contentSize.width - g.containerSize.width)
-            return EdgePull(x: max(0, x), leading: max(0, -x), trailing: max(0, x - maxX))
-        } action: { _, p in
-            scrollX = p.x
-            pull = p
-            // Seuil franchi pendant le tiré : retour haptique, le chargement se fait au relâcher.
-            if p.leading > pullThreshold { armed = true } else if p.trailing > pullThreshold { armed = false }
-            // Revenu sous le seuil avant de relâcher : on annule.
-            else if interacting { armed = nil }
-        }
-        .onScrollPhaseChange { old, new in
-            interacting = new == .interacting
-            guard old == .interacting, new != .interacting, let backward = armed else { return }
-            armed = nil
-            load(backward: backward)
-        }
-        // Revenu sur aujourd'hui (bouton « Aujourd'hui ») : la grille se recale au début.
-        .onChange(of: days.first) { old, new in
-            guard let old, let new, new > old else { return }
-            withAnimation(.snappy) { position.scrollTo(x: CGFloat(days.firstIndex(of: selected) ?? 0) * colStep) }
-        }
-        .sensoryFeedback(.impact(weight: .medium), trigger: armed) { _, new in new != nil }
-        .background(Theme.surface)
-        // Colonne « veille » qui s'étire entre les repas (fixes) et le premier jour.
-        .overlay(alignment: .leading) { stretchColumn.padding(.leading, labelWidth) }
-        .overlay(alignment: .trailing) { pullHint(backward: false, distance: pull.trailing) }
-        .clipShape(.rect(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
-    }
-
-    /// Charge 7 jours de plus. Vers l'arrière, on passe ensuite sur ces jours précédents :
-    /// la grille reste d'abord en place (les colonnes ajoutées à gauche la décalent), puis glisse jusqu'à eux.
-    private func load(backward: Bool) {
-        extend(backward)
-        if backward {
-            let x = scrollX + 7 * colStep
-            DispatchQueue.main.async {
-                position.scrollTo(x: x)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.smooth(duration: 0.45)) { position.scrollTo(x: max(0, x - 7 * colStep)) }
-                }
-            }
-        }
-    }
-
-    /// La veille du premier jour, étirée à la largeur tirée : son nom en haut, la double flèche au milieu.
-    @ViewBuilder
-    private var stretchColumn: some View {
-        let distance = pull.leading
-        if distance > 4, let first = days.first {
-            let ready = distance > pullThreshold
-            VStack(spacing: 0) {
-                Text(Days.shortLabel(Days.adding(-1, to: first)))
-                    .font(.subheadline.bold()).foregroundStyle(Theme.muted)
-                    .lineLimit(1).fixedSize()
-                    .padding(.top, 12)
-                    .opacity(distance > 60 ? 1 : 0)
-                Spacer()
-                VStack(spacing: 6) {
-                    Image(systemName: "chevron.left.2")
-                        .font(.body.bold())
-                        .symbolEffect(.bounce, value: ready)
-                    Text(ready ? "Relâche" : "Jours\nprécédents")
-                        .font(.caption2.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2).fixedSize()
-                        .opacity(distance > 50 ? 1 : 0)
-                }
-                .foregroundStyle(ready ? Theme.accent : Theme.muted)
-                Spacer()
-            }
-            .frame(width: distance)
-            .frame(maxHeight: .infinity)
-            .background(ready ? Theme.accentSoft : Theme.surface2.opacity(0.6))
-            .clipped()
-            .overlay(alignment: .trailing) { Theme.line.frame(width: 1) }
-            .animation(.snappy, value: ready)
-            .allowsHitTesting(false)
-        }
-    }
-
-    /// Indicateur qui apparaît dans l'espace révélé quand on tire au-delà d'un bord.
-    @ViewBuilder
-    private func pullHint(backward: Bool, distance: CGFloat) -> some View {
-        if distance > 4 {
-            let ready = distance > pullThreshold
-            VStack(spacing: 6) {
-                Image(systemName: backward ? "chevron.left.2" : "chevron.right.2")
-                    .font(.body.bold())
-                    .symbolEffect(.bounce, value: ready)
-                Text(ready ? "Relâche" : backward ? "Jours\nprécédents" : "Jours\nsuivants")
-                    .font(.caption2.weight(.semibold))
-                    .multilineTextAlignment(.center)
-            }
-            .foregroundStyle(ready ? Theme.accent : Theme.muted)
-            .frame(width: max(distance, 1))
-            .opacity(min(1, Double(distance / pullThreshold)))
-            .allowsHitTesting(false)
-        }
-    }
-
-    private func slotLabel(_ s: String) -> some View {
-        Text(s).font(.system(size: 9, weight: .medium).monospaced()).textCase(.uppercase).kerning(0.5)
-            .foregroundStyle(Theme.muted)
-            .lineLimit(2).minimumScaleFactor(0.8)
-    }
-
-    /// Cellule de la colonne de gauche, décalée pour rester visible pendant le défilement.
-    private func pinned(_ content: some View, center: Bool = false) -> some View {
-        content
-            .padding(.horizontal, 7).padding(.vertical, 10)
-            .frame(width: labelWidth, alignment: .leading)
-            .frame(maxHeight: .infinity, alignment: center ? .leading : .topLeading)
-            .background(Theme.surface)
-            .overlay(alignment: .trailing) { Theme.line.frame(width: 1) }
-            // Toujours fixe à l'écran, même quand la grille rebondit au bord.
-            .offset(x: pull.x - pull.leading)
-            .zIndex(1)
-    }
-
-    private func dayBackground(_ d: DayKey) -> Color {
-        d == today ? Theme.accentWash : d < today ? Theme.surface2.opacity(0.35) : .clear
-    }
-
-    private func header(_ d: DayKey) -> some View {
-        Button { openDay(d) } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Days.shortWeekday(d)).font(.headline)
-                    .foregroundStyle(d < today ? Theme.muted : Theme.ink)
-                Text(Days.dayNumber(d))
-                    .font(.footnote.weight(.semibold).width(.expanded)).monospacedDigit()
-                    .foregroundStyle(d == today ? Theme.onAccent : Theme.muted)
-                    .padding(.horizontal, d == today ? 7 : 0).padding(.vertical, 1)
-                    .background(d == today ? Theme.accent : .clear, in: .capsule)
-            }
-            .padding(.horizontal, 8).padding(.vertical, 10)
-            .frame(width: colWidth, alignment: .leading)
-            .frame(maxHeight: .infinity)
+            .lineLimit(1)
+            .monospacedDigit()
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .background {
-            // Point de départ (et d'arrivée) de la pastille du jour lors de la bascule.
-            if d == selected { Color.clear.matchedGeometryEffect(id: "jour", in: ns) }
-        }
-        .background(dayBackground(d))
-        .background(Theme.surface)
-        .accessibilityLabel("Ouvrir \(Days.longLabel(d))")
+        .accessibilityLabel(empty ? "Aucun plat cette semaine, objectif \(Fmt.n0(target)) kilocalories par jour"
+                            : "\(Fmt.n0(avg)) kilocalories par jour en moyenne, objectif \(Fmt.n0(target)), \(onTarget) jours sur \(days.count) dans la cible")
+        .accessibilityHint("Modifier mes objectifs")
     }
 
-    private func cell(day d: DayKey, slot s: Int) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(entries.on(d).filter { $0.slot == s }) { e in
-                if e.isValid {
-                    Button { openDay(d) } label: {
-                        chipContent(e)
-                            .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.Radius.cell))
+    /// Empreinte de ce qui fait varier la hauteur des lignes : la grille remesure quand elle change.
+    /// Seuls les jours affichés comptent (un plat déplacé vers eux change de date, ce qui recrée l'index).
+    private var layoutKey: Int {
+        var h = Hasher()
+        for e in days.flatMap(index.entries(on:)) {
+            h.combine(e.uid); h.combine(e.date); h.combine(e.slot); h.combine(e.x); h.combine(e.qty)
+            h.combine(e.title); h.combine(e.isValid); h.combine(e.recipe?.byPiece)
+        }
+        h.combine(unfolded)
+        h.combine(typeSize)
+        h.combine(overview)
+        return h.finalize()
+    }
+
+    /// Empreinte de ce qui fait varier la hauteur d'une case : la grille ne remesure que les cases où elle change.
+    private func cellKey(_ d: DayKey, _ s: Repas) -> Int {
+        var h = Hasher()
+        for e in index.entries(on: d) where e.repas == s {
+            h.combine(e.uid); h.combine(e.order); h.combine(e.x); h.combine(e.qty)
+            h.combine(e.title); h.combine(e.isValid); h.combine(e.recipe?.byPiece)
+        }
+        h.combine(unfolded.contains(SlotRef(date: d, repas: s)))
+        h.combine(typeSize)
+        h.combine(overview)
+        return h.finalize()
+    }
+
+    /// « 2 – 8 nov. » au bord de l'écran pendant le tirer.
+    private func pullBadge(_ p: WeekPull) -> some View {
+        let first = Days.adding(p.forward ? 7 : -7, to: days.first ?? Days.today)
+        return PullBadge(text: Days.shortRangeText(first, Days.adding(6, to: first)), pull: p, meter: meter)
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            .accessibilityHidden(true)
+    }
+
+    private var footer: some View {
+        Text(overview
+             ? "Toucher un jour pour l'ouvrir. Écarter deux doigts pour revenir au détail, tirer au bord pour changer de semaine."
+             : "Toucher un jour ou un plat pour ouvrir le détail. Tirer au-delà du bord de la grille pour passer à la semaine voisine, pincer pour voir toute la semaine.")
+            .font(.footnote).foregroundStyle(Color.texte2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 16).padding(.bottom, 24)
+    }
+
+    private func totals(of d: DayKey) -> Macros { index.totals(on: d) }
+
+    private func dayBackground(_ d: DayKey) -> Color {
+        d == today ? .colonneDuJour : .clear
+    }
+
+    /// « Ven 16 ………… 2 360 kcal » ; le trait du bas est la jauge du jour.
+    /// Vue d'ensemble : « Ven », « 16 », « 2 360 » les uns sous les autres.
+    private func header(_ d: DayKey, _ target: Double) -> some View {
+        let isToday = d == today
+        let kcal = totals(of: d).kcal
+        let etat = Nutrition.etatJour(kcal: kcal, objectif: target)
+        return Button { openDay(d) } label: {
+            Group {
+                if overview { overviewHeader(d, kcal, target) } else { headerLine(d, kcal, target) }
+            }
+            .frame(width: colWidth, height: overview ? size.overviewHeader : size.header,
+                   alignment: overview ? .center : .leading)
+            .overlay(alignment: .bottom) {
+                jauge(kcal, target, sous: isToday ? .accentColor : .texte2)
+            }
+            .background(dayBackground(d))
+            .background(Color.fond)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(Days.weekday(d)) \(Days.dayNumber(d)), \(Fmt.n0(kcal)) kilocalories, \(etat.libelle)")
+        .accessibilityHint("Ouvrir le jour")
+    }
+
+    private func dayNumber(_ d: DayKey) -> some View {
+        let isToday = d == today
+        return Text(Days.dayNumber(d)).police(.tamponDate)
+            .foregroundStyle(isToday ? Color.surAccent : Color.texte2)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background {
+                if isToday { RoundedRectangle(cornerRadius: Arrondi.tamponDate).fill(Color.accentColor) }
+            }
+    }
+
+    private func overviewHeader(_ d: DayKey, _ kcal: Double, _ target: Double) -> some View {
+        VStack(spacing: 2) {
+            Text(Days.shortWeekday(d)).font(.system(size: size.headerUnit + 1, weight: .semibold))
+                .foregroundStyle(Color.texte)
+            dayNumber(d)
+            Text(kcal > 0 ? Fmt.n0(kcal) : "—").font(.system(size: size.headerUnit + 1, weight: .semibold, design: .rounded))
+                .foregroundStyle(kcal > 0 ? Seuil.couleurJour(kcal, objectif: target, sinon: .texte) : Color.texte3)
+                .monospacedDigit()
+        }
+        .lineLimit(1).minimumScaleFactor(0.7)
+        .padding(.bottom, 3)
+    }
+
+    private func headerLine(_ d: DayKey, _ kcal: Double, _ target: Double) -> some View {
+        Group {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(Days.shortWeekday(d)).font(.system(size: size.weekday, weight: .semibold))
+                    .foregroundStyle(Color.texte)
+                dayNumber(d)
+                Spacer(minLength: 4)
+                if kcal > 0 {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(Fmt.n0(kcal)).police(.kcalEnTete)
+                            .foregroundStyle(Seuil.couleurJour(kcal, objectif: target, sinon: .texte))
+                        Text("kcal").font(.system(size: size.headerUnit)).foregroundStyle(Color.texte2)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("entry-\(e.title)")
-                    // Appui long : doigt immobile → menu ; doigt qui bouge → le plat se détache.
-                    // Le déposer ailleurs le duplique (« même petit-déj demain ») ; déplacer passe par le menu.
-                    .draggable(e.uid) { chipPreview(e) }
-                    .contextMenu {
-                        Button("Ouvrir \(Days.longLabel(d))", systemImage: "calendar") { openDay(d) }
-                        if let r = e.recipe {
-                            Button("Voir la recette", systemImage: "fork.knife") { viewingRecipe = RecipeEditTarget(recipe: r) }
-                        } else if let g = e.ingredient {
-                            Button("Voir l'ingrédient", systemImage: "leaf") { viewingIngredient = IngredientEditTarget(ingredient: g) }
+                } else {
+                    Text("—").police(.kcalEnTete).foregroundStyle(Color.texte3)
+                }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 3)
+        }
+    }
+
+    /// Barre de 3 pt sur toute la largeur de la colonne, sans coins arrondis : kcal / objectif, plafonné à 100 %.
+    private func jauge(_ kcal: Double, _ target: Double, sous: Color) -> some View {
+        let ratio = target > 0 ? min(max(kcal / target, 0), 1) : 0
+        return Color.filet
+            .frame(height: 3)
+            .overlay(alignment: .leading) {
+                GeometryReader { g in
+                    Seuil.couleurJour(kcal, objectif: target, sinon: sous)
+                        .frame(width: g.size.width * ratio)
+                }
+            }
+    }
+
+    /// Bande au-dessus d'une ligne de repas, avec le nom du repas dans chaque colonne (en discret) :
+    /// on sait toujours quel repas on regarde, où qu'on soit dans la grille.
+    private func band(_ d: DayKey, slot s: Repas) -> some View {
+        Color.fond
+            .overlay(dayBackground(d))
+            .frame(width: colWidth, height: size.band)
+            .overlay(alignment: .topLeading) {
+                // Vue d'ensemble : le nom du repas dans la première colonne seulement, la rangée se lit d'un trait.
+                if !overview || d == days.first {
+                    Text(overview ? s.nomCourt : s.nom).police(.bandeRepas).foregroundStyle(Color.texte3)
+                        .lineLimit(1)
+                        .padding(.top, 7).padding(.horizontal, overview ? 5 : 9)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    /// Vue d'ensemble : une mini-tuile avec les kcal du repas et un point par plat (ambre pour un repas libre).
+    /// Toucher ouvre le jour. Case vide : rien, la colonne reste lisible d'un coup d'œil.
+    private func overviewCell(day d: DayKey, slot s: Repas) -> some View {
+        let list = index.entries(on: d, repas: s)
+        let kcal = list.map(\.totals.kcal).reduce(0, +)
+        return Button { openDay(d) } label: {
+            VStack(spacing: 0) {
+                if !list.isEmpty {
+                    VStack(spacing: 5) {
+                        Text(Fmt.n0(kcal)).font(.system(size: size.overviewKcal, weight: .semibold, design: .rounded))
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                            .foregroundStyle(Color.texte)
+                        HStack(spacing: 3) {
+                            ForEach(list.prefix(4)) { e in
+                                Circle().fill(e.isFree ? Color.libre : Color.texte3).frame(width: 5, height: 5)
+                            }
+                            if list.count > 4 {
+                                Text("+").font(.system(size: 9, weight: .bold)).foregroundStyle(Color.texte3)
+                            }
                         }
-                        Menu("Copier vers", systemImage: "plus.square.on.square") {
-                            dayButtons(except: d) { duplicate(e, day: $0, slot: s) }
-                        }
-                        Menu("Déplacer vers", systemImage: "arrow.left.arrow.right") {
-                            dayButtons(except: d) { move(e, day: $0, slot: s) }
-                        }
-                        Button("Retirer", systemImage: "trash", role: .destructive) {
-                            withAnimation(.snappy) { context.delete(e) }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.caseGrille, in: .rect(cornerRadius: Arrondi.caseGrille - 4))
+                    .overlay(RoundedRectangle(cornerRadius: Arrondi.caseGrille - 4).stroke(Color.caseGrilleContour, lineWidth: 1))
+                }
+            }
+            .padding(.horizontal, 3).padding(.bottom, 6)
+            .frame(width: colWidth, height: size.overviewRow, alignment: .top)
+            .background(dayBackground(d))
+            .background(Color.fond)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(list.isEmpty ? "\(Days.weekday(d)) \(Days.dayNumber(d)), \(s.nom), rien de prévu"
+                            : "\(Days.weekday(d)) \(Days.dayNumber(d)), \(s.nom), \(list.count) plat\(list.count > 1 ? "s" : ""), \(Fmt.n0(kcal)) kilocalories")
+        .accessibilityHint("Ouvrir le jour")
+        .accessibilityIdentifier("cell-\(days.firstIndex(of: d) ?? -1)-\(s.rawValue)")
+    }
+
+    /// `measuring` : à sa hauteur idéale, pour que la grille calcule la hauteur de la ligne.
+    private func cell(day d: DayKey, slot s: Repas, measuring: Bool = false) -> some View {
+        let ref = SlotRef(date: d, repas: s)
+        let list = index.entries(on: d, repas: s)
+        let lone = list.filter { $0.ingredient != nil }
+        let folded = lone.count >= groupFrom && !unfolded.contains(ref)
+        return VStack(alignment: .leading, spacing: 6) {
+            if !list.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(list) { e in
+                        if e.ingredient == nil || lone.count < groupFrom {
+                            entryTile(e, day: d, slot: s)
+                        } else if e.persistentModelID == lone.first?.persistentModelID {
+                            // Les ingrédients seuls, regroupés à la place du premier : toucher déplie ou replie.
+                            groupTile(lone, ref: ref, folded: folded, day: d, slot: s)
                         }
                     }
                 }
+                // Tuiles à leur hauteur naturelle : sinon la case partage sa hauteur avec le « + » extensible,
+                // et les noms seraient tronqués à une ligne.
+                .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
             Button { add(d, s) } label: {
-                Image(systemName: "plus").font(.footnote.bold())
-                    .frame(maxWidth: .infinity, minHeight: 26)
-                    .foregroundStyle(Theme.muted)
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                Image(systemName: "plus").font(.system(size: size.plus, weight: .medium))
+                    .foregroundStyle(Color.texte3)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: size.plusZone)
+                    // La zone « + » occupe aussi la place laissée libre par une case voisine plus haute.
+                    .frame(maxHeight: measuring ? nil : .infinity, alignment: .top)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Ajouter un plat : \(Days.longLabel(d)), \(Week.slots[s].lowercased())")
+            .accessibilityLabel("Ajouter un plat : \(Days.longLabel(d)), \(s.nom.lowercased())")
         }
-        .padding(6)
+        .padding(.horizontal, 6)
         .frame(width: colWidth, alignment: .topLeading)
-        .frame(minHeight: 64, maxHeight: .infinity, alignment: .topLeading)
-        .background(dropTarget == SlotRef(date: d, slot: s) ? Theme.accent.opacity(0.14) : .clear)
+        .frame(maxHeight: measuring ? nil : .infinity, alignment: .topLeading)
+        .background(dropTarget == SlotRef(date: d, repas: s) ? Color.accentColor.opacity(0.14) : .clear)
         .background(dayBackground(d))
-        .background(Theme.surface)
-        .dropDestination(for: String.self) { uids, _ in
-            guard let uid = uids.first, let e = entries.first(where: { $0.uid == uid }) else { return false }
-            // Reposé sur sa propre case : rien à faire.
-            guard e.date != d || e.slot != s else { return false }
-            duplicate(e, day: d, slot: s)
-            return true
-        } isTargeted: { on in
-            let ref = SlotRef(date: d, slot: s)
-            withAnimation(.snappy) {
-                if on { dropTarget = ref } else if dropTarget == ref { dropTarget = nil }
-            }
-        }
+        .background(Color.fond)
         .sensoryFeedback(.success, trigger: dropCount)
         .accessibilityElement(children: .contain)
         // Index dans la grille (0 = premier jour affiché), pour les tests d'interface.
-        .accessibilityIdentifier("cell-\(days.firstIndex(of: d) ?? -1)-\(s)")
+        .accessibilityIdentifier("cell-\(days.firstIndex(of: d) ?? -1)-\(s.rawValue)")
     }
 
-    private func move(_ e: PlanEntry, day: DayKey, slot: Int) {
-        withAnimation(.snappy) { PlanActions.move(e, date: day, slot: slot, in: context) }
-        dropCount += 1
-    }
-
-    private func duplicate(_ e: PlanEntry, day: DayKey, slot: Int) {
-        withAnimation(.snappy) { PlanActions.duplicate(e, date: day, slot: slot, in: context) }
-        dropCount += 1
-    }
-
-    /// Les jours affichés sauf `day`, pour les sous-menus Copier / Déplacer.
-    @ViewBuilder
-    private func dayButtons(except day: DayKey, action: @escaping (DayKey) -> Void) -> some View {
-        ForEach(days.filter { $0 != day }, id: \.self) { other in
-            Button(Days.longLabel(other)) { action(other) }
-        }
-    }
-
-    /// Case pleine : nom sur deux lignes, kcal en Expanded, portion en pastille, micro-barre G · P · L.
-    private func chipContent(_ e: PlanEntry) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(e.title).font(.footnote.weight(.semibold)).foregroundStyle(Theme.ink)
-                .lineLimit(2).multilineTextAlignment(.leading)
-            HStack(spacing: 4) {
-                Text(Fmt.n0(e.totals.kcal)).font(.caption.weight(.semibold).width(.expanded)).monospacedDigit()
-                    .foregroundStyle(Theme.muted)
-                Spacer(minLength: 0)
-                if let g = e.ingredient {
-                    tag(Fmt.cook(e.qty * e.x, unit: g.unit))
-                } else if e.x != 1 {
-                    tag(Fmt.x(e.x))
+    /// `grouped` : ligne d'un regroupement déplié, dans la carte du groupe plutôt que dans sa propre tuile.
+    private func entryTile(_ e: PlanEntry, day d: DayKey, slot s: Repas, grouped: Bool = false) -> some View {
+        Button { openDay(d) } label: {
+            Group {
+                if grouped {
+                    tileContent(e)
+                        .padding(EdgeInsets(top: 7, leading: 9, bottom: 8, trailing: 9))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.caseGrille)
+                } else {
+                    tileContent(e).tuileGrille(libre: e.isFree)
                 }
             }
-            MacroSplit(m: e.totals, height: 3).padding(.top, 2)
+            .contentShape(.contextMenuPreview, .rect(cornerRadius: grouped ? 0 : Arrondi.caseGrille))
         }
-        .padding(.horizontal, 8).padding(.top, 7).padding(.bottom, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface2, in: .rect(cornerRadius: Theme.Radius.cell))
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(Days.weekday(d)) \(Days.dayNumber(d)), \(s.nom), \(e.title), \(e.isFree ? "repas libre, environ " : "")\(Fmt.n0(e.totals.kcal)) kilocalories")
+        .accessibilityIdentifier("entry-\(e.title)")
+        // Appui long : doigt immobile → menu ; doigt qui bouge → le plat se détache.
+        // Le déposer ailleurs le duplique (« même petit-déj demain ») ; déplacer passe par le menu.
+        .onDrag {
+            drag.uid = e.uid
+            return NSItemProvider(object: e.uid as NSString)
+        } preview: { chipPreview(e) }
+        .contextMenu {
+            Button("Ouvrir \(Days.longLabel(d))", systemImage: "calendar") { openDay(d) }
+            if let r = e.recipe {
+                Button("Voir la recette", systemImage: "fork.knife") { viewingRecipe = RecipeEditTarget(recipe: r) }
+                if r.byPiece {
+                    Button("Modifier le nombre", systemImage: "number") { edition = .pieces(e) }
+                }
+            } else if let g = e.ingredient {
+                Button("Voir l'ingrédient", systemImage: "leaf") { viewingIngredient = IngredientEditTarget(ingredient: g) }
+            } else if e.isFree {
+                Button("Modifier le repas libre", systemImage: "pencil") { edition = .libre(e) }
+            }
+            Menu("Copier vers", systemImage: "plus.square.on.square") {
+                dayButtons(except: d) { duplicate(e, day: $0, slot: s) }
+            }
+            Menu("Déplacer vers", systemImage: "arrow.left.arrow.right") {
+                dayButtons(except: d) { move(e, day: $0, slot: s) }
+            }
+            Button("Retirer", systemImage: "trash", role: .destructive) {
+                withAnimation(.snappy) { context.delete(e) }
+            }
+        }
     }
 
-    private func tag(_ text: String) -> some View {
-        Text(text).font(.system(size: 9, weight: .medium).monospaced()).foregroundStyle(Theme.accent)
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(Theme.accentSoft, in: .capsule)
+    /// Une seule carte « 4 ingrédients · 240 kcal » ; dépliée, elle s'agrandit vers le bas et liste chaque ingrédient,
+    /// qui garde son toucher, son menu et son glisser.
+    private func groupTile(_ lone: [PlanEntry], ref: SlotRef, folded: Bool, day d: DayKey, slot s: Repas) -> some View {
+        let kcal = lone.map(\.totals.kcal).reduce(0, +)
+        return VStack(spacing: 0) {
+            Button {
+                withAnimation(.snappy) {
+                    if folded { unfolded.insert(ref) } else { unfolded.remove(ref) }
+                }
+            } label: {
+                HStack(alignment: .top, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        // Même taille que les noms de plats, quel que soit le nombre : pas de rétrécissement,
+                        // retour à la ligne si besoin.
+                        Text("\(lone.count) ingrédients")
+                            .font(.system(size: size.tileName, weight: .semibold)).lineSpacing(size.tileLeading)
+                            .monospacedDigit()
+                            .lineLimit(2).multilineTextAlignment(.leading)
+                            .foregroundStyle(Color.texte)
+                        Text("\(Fmt.n0(kcal)) kcal")
+                            .font(.system(size: size.tileMeta)).foregroundStyle(Color.texte2).monospacedDigit()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: size.tileMeta, weight: .semibold)).foregroundStyle(Color.accentColor)
+                        .rotationEffect(.degrees(folded ? 0 : 180))
+                        .padding(.top, 2)
+                }
+                .padding(EdgeInsets(top: 8, leading: 9, bottom: 9, trailing: 9))
+                .background(Color.caseGrille)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .contentShape(.contextMenuPreview, .rect(cornerRadius: Arrondi.caseGrille))
+            .contextMenu {
+                Button("Ouvrir \(Days.longLabel(d))", systemImage: "calendar") { openDay(d) }
+                Button(LoneToRecipe.title(lone.count), systemImage: LoneToRecipe.icon) {
+                    savingLone = LoneToRecipe(entries: lone)
+                }
+            }
+            .accessibilityLabel(folded ? "\(lone.count) ingrédients seuls, \(Fmt.n0(kcal)) kcal" : "Replier les \(lone.count) ingrédients")
+            .accessibilityHint(folded ? "Afficher chaque ingrédient" : "")
+
+            // Toujours présentes, rognées à une hauteur nulle quand c'est replié : seule la hauteur s'anime,
+            // la carte se déroule vers le bas au lieu de faire glisser des tuiles depuis son haut.
+            VStack(spacing: 0) {
+                ForEach(lone) { e in
+                    Color.caseGrilleContour.frame(height: 1).padding(.horizontal, 9).background(Color.caseGrille)
+                    entryTile(e, day: d, slot: s, grouped: true)
+                }
+            }
+            .frame(height: folded ? 0 : nil, alignment: .top)
+            .clipped()
+            .opacity(folded ? 0 : 1)
+            .allowsHitTesting(!folded)
+            .accessibilityHidden(folded)
+        }
+        .carteGrille()
+    }
+
+    /// Plat glissé lâché sur une case : copié à la fin de la case.
+    private func dropped(on d: DayKey, slot s: Repas) {
+        guard let uid = drag.uid, let e = index.entry(uid: uid) else { return }
+        drag.uid = nil
+        // Reposé sur sa propre case : rien à faire.
+        guard e.date != d || e.repas != s else { return }
+        duplicate(e, day: d, slot: s)
+    }
+
+    // Sans `withAnimation` : c'est la grille qui anime la hauteur des lignes (voir `WeekGrid.update`).
+    private func move(_ e: PlanEntry, day: DayKey, slot: Repas) {
+        PlanActions.move(e, date: day, slot: slot, in: context)
+        dropCount += 1
+    }
+
+    private func duplicate(_ e: PlanEntry, day: DayKey, slot: Repas) {
+        PlanActions.duplicate(e, date: day, slot: slot, in: context)
+        dropCount += 1
+    }
+
+    /// Pour les sous-menus Copier / Déplacer : d'hier aux deux semaines à venir (au moins la semaine qui suit `day`),
+    /// sauf `day`. Les jours passés de la fenêtre n'y sont pas : on planifie vers l'avant.
+    @ViewBuilder
+    private func dayButtons(except day: DayKey, action: @escaping (DayKey) -> Void) -> some View {
+        let start = Days.adding(-1, to: today)
+        let end = max(Days.adding(13, to: today), Days.adding(7, to: day))
+        ForEach(Days.range(from: start, count: Days.distance(from: start, to: end) + 1).filter { $0 != day }, id: \.self) { other in
+            Button { action(other) } label: {
+                Text(Days.longLabel(other))
+                if let r = Days.relative(other, today: today) { Text(r.prefix(1).uppercased() + r.dropFirst()) }
+            }
+        }
     }
 
     /// Aperçu du plat pendant le glisser.
     private func chipPreview(_ e: PlanEntry) -> some View {
-        chipContent(e).frame(width: colWidth - 12)
+        tileContent(e)
+            .tuileGrille(libre: e.isFree)
+            .frame(width: colWidth - 12)
     }
 
-    /// Total du jour en Expanded, souligné de sa jauge (encre, vert dans ±3 %, brique au-delà).
-    private func foot(_ d: DayKey, _ t: Macros) -> some View {
-        let target = settings.targetKcal
-        let c = Theme.gauge(kcal: t.kcal, target: target)
-        return Button { openDay(d) } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(t.kcal > 0 ? Fmt.n0(t.kcal) : "—")
-                    .font(.callout.weight(.bold).width(.expanded)).monospacedDigit()
-                    .foregroundStyle(c == Theme.over ? Theme.over : Theme.ink)
-                Capsule().fill(Theme.surface2).frame(height: 3)
-                    .overlay(alignment: .leading) {
-                        GeometryReader { g in
-                            Capsule().fill(c).frame(width: g.size.width * min(target > 0 ? t.kcal / target : 0, 1))
-                        }
-                    }
-            }
-            .padding(.horizontal, 8).padding(.vertical, 10)
-            .frame(width: colWidth, alignment: .leading)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .contentShape(.rect)
+    /// Nom du plat sur 3 lignes au plus, puis « 636 kcal », « 636 kcal · ×1,2 », ou « 150 g · 165 kcal » pour un ingrédient seul.
+    private func tileContent(_ e: PlanEntry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Repas libre : petite icône ambre devant le nom.
+            (e.isFree ? Text("\(Text(Image(systemName: FreeMealStyle.icon)).foregroundStyle(Color.libre)) \(e.title)") : Text(e.title))
+                .font(.system(size: size.tileName, weight: .semibold)).lineSpacing(size.tileLeading)
+                .lineLimit(3).multilineTextAlignment(.leading)
+                .foregroundStyle(Color.texte)
+            chipDetail(e).font(.system(size: size.tileMeta)).foregroundStyle(Color.texte2).monospacedDigit()
         }
-        .buttonStyle(.plain)
-        .background(dayBackground(d))
-        .background(Theme.surface)
-        .accessibilityLabel("\(Days.longLabel(d)) : \(Fmt.n0(t.kcal)) kcal")
     }
 
+    private func chipDetail(_ e: PlanEntry) -> Text {
+        let kcal = "\(Fmt.n0(e.totals.kcal)) kcal"
+        switch e.kind {
+        case .ingredient(let g, let q):
+            return Text(Fmt.cook(q * e.x, unit: g.unit) + " · " + kcal)
+        case .libre(let m):
+            return Text(FreeMealStyle.kcal(m)).foregroundStyle(Color.libre)
+        case .recette(let r) where r.byPiece:
+            // À la pièce : toujours le nombre (« 1 300 kcal · 2 pièces »).
+            return Text("\(kcal) · \(Text(Fmt.pieces(e.x)).fontWeight(.semibold).foregroundStyle(Color.accentColor))")
+        case .recette, .vide:
+            guard e.x != 1 else { return Text(kcal) }
+            return Text("\(kcal) · \(Text(Fmt.x(e.x)).fontWeight(.semibold).foregroundStyle(Color.accentColor))")
+        }
+    }
 }
 
-/// Position horizontale de la grille et distance tirée au-delà de chaque bord.
-struct EdgePull: Equatable {
-    var x: CGFloat = 0
-    var leading: CGFloat = 0
-    var trailing: CGFloat = 0
+/// Tailles de la grille, qui suivent la taille de texte choisie.
+private struct TaillesGrille: DynamicProperty {
+    @ScaledMetric(relativeTo: .subheadline) var statsUnit: CGFloat = 14
+    @ScaledMetric(relativeTo: .footnote) var statsCount: CGFloat = 13
+    @ScaledMetric(relativeTo: .subheadline) var header: CGFloat = 38
+    @ScaledMetric(relativeTo: .subheadline) var weekday: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption2) var headerUnit: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) var band: CGFloat = 24
+    @ScaledMetric(relativeTo: .subheadline) var tileName: CGFloat = 14
+    /// Interligne 18 pour le nom en 14.
+    @ScaledMetric(relativeTo: .subheadline) var tileLeading: CGFloat = 1.3
+    @ScaledMetric(relativeTo: .caption) var tileMeta: CGFloat = 12
+    @ScaledMetric(relativeTo: .subheadline) var plus: CGFloat = 14
+    @ScaledMetric(relativeTo: .subheadline) var plusZone: CGFloat = 26
+    /// Vue d'ensemble : en-tête sur trois lignes, rangée de repas de hauteur fixe, kcal de la mini-tuile.
+    @ScaledMetric(relativeTo: .subheadline) var overviewHeader: CGFloat = 58
+    @ScaledMetric(relativeTo: .subheadline) var overviewRow: CGFloat = 52
+    @ScaledMetric(relativeTo: .caption) var overviewKcal: CGFloat = 12
+}
+
+/// Plat glissé depuis la grille, retenu dès le départ du geste : le dépôt le copie sans attendre que le système
+/// livre le contenu glissé. Une simple référence, pas un état observé : la retenir ne redessine rien.
+final class DragSource {
+    var uid: String?
+}
+
+/// Pastille du tirer : le bleu la remplit depuis le côté tiré à mesure qu'on approche du seuil ; pleine (et un peu
+/// plus grande) au seuil. Seule à lire l'avancée, elle est la seule redessinée à chaque image.
+private struct PullBadge: View {
+    var text: String
+    var pull: WeekPull
+    var meter: PullMeter
+
+    var body: some View {
+        let anchor: UnitPoint = pull.forward ? .trailing : .leading
+        label(Color.texte2)
+            .background(Color.surface)
+            // Partie remplie : texte blanc sur bleu, découpée à l'avancée du tirer.
+            .overlay {
+                label(Color.surAccent)
+                    .background(Color.accentColor)
+                    .mask { Rectangle().scaleEffect(x: meter.progress, anchor: anchor) }
+            }
+            .clipShape(.capsule)
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+            .scaleEffect(pull.armed ? 1.05 : 1)
+    }
+
+    private func label(_ color: Color) -> some View {
+        HStack(spacing: 6) {
+            if !pull.forward { Image(systemName: "chevron.left") }
+            Text(text)
+            if pull.forward { Image(systemName: "chevron.right") }
+        }
+        .font(.subheadline.weight(.semibold)).monospacedDigit()
+        .foregroundStyle(color)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+    }
 }

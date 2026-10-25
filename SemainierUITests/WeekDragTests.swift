@@ -9,7 +9,7 @@ final class WeekDragTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-UITestData", "-tab", "planning", "-planning.mode", "semaine"]
+        app.launchArguments = ["-UITestData", "-DisableAnimations", "-tab", "planning", "-planning.mode", "semaine", "-semaine.ensemble", "NO"]
         app.launch()
     }
 
@@ -43,20 +43,20 @@ final class WeekDragTests: XCTestCase {
         XCTAssertFalse(app.buttons["entry-Skyr test"].waitForExistence(timeout: 2))
     }
 
-    func testPullRightLoadsPreviousSevenDays() {
+    func testPullingPastFirstDayShowsPreviousWeek() {
         let todayCell = app.otherElements["cell-0-2"]
         XCTAssertTrue(todayCell.buttons["entry-Skyr test"].waitForExistence(timeout: 5))
 
-        // On tire la grille vers la droite au-delà du premier jour, puis on relâche.
+        // On tire la grille vers la droite au-delà du premier jour, dans le rebond, puis on lâche.
         let start = app.otherElements["cell-0-0"].coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
         let end = start.withOffset(CGVector(dx: 330, dy: 0))
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
 
-        // 7 jours ajoutés devant : aujourd'hui devient la 8e colonne.
-        XCTAssertTrue(app.otherElements["cell-7-2"].buttons["entry-Skyr test"].waitForExistence(timeout: 3))
+        // La grille passe à la semaine précédente, calée sur son dernier jour (colonne 6).
+        XCTAssertTrue(app.otherElements["cell-6-0"].waitForExistence(timeout: 3))
 
-        // « Aujourd'hui » referme les jours passés : aujourd'hui redevient la première colonne.
-        let todayButton = app.buttons["Aujourd'hui"]
+        // Le bouton du jour (« Ven 23 ») ramène sur la semaine d'aujourd'hui : aujourd'hui redevient la première colonne.
+        let todayButton = app.buttons["today"]
         XCTAssertTrue(todayButton.waitForExistence(timeout: 2))
         todayButton.tap()
         XCTAssertTrue(app.otherElements["cell-0-2"].buttons["entry-Skyr test"].waitForExistence(timeout: 3))
