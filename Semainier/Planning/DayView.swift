@@ -4,399 +4,400 @@ import UIKit
 
 struct DayView: View {
     @Binding var day: DayKey
-    /// Les 7 jours de la bande (contient `day`).
-    var stripDays: [DayKey]
-    var entries: [PlanEntry]
+    /// Semaine affichée dans le bandeau, signalée au planning (bouton du jour). Le bandeau défile seul,
+    /// sans changer `day`.
+    @Binding var stripWeek: DayKey?
+    /// Change quand le bandeau doit revenir sur la semaine du jour affiché (bouton du jour).
+    var recenter: Int
+    var index: PlanIndex
     var ns: Namespace.ID
-    var add: (Int) -> Void
+    var add: (Repas) -> Void
+    /// Carte total sortie de l'écran : la bulle du haut prend alors le relais avec le total du jour.
+    @Binding var totalCardHidden: Bool
 
     @Environment(AppSettings.self) private var settings
     @Environment(Toast.self) private var toast
     @Environment(\.modelContext) private var context
     @State private var expanded: Set<PersistentIdentifier> = []
-    @State private var editingQty: PlanEntry?
-    @State private var editingItem: ItemEdit?
-    /// Début du dernier balayage : un bouton relâché juste après ne doit pas se déclencher.
-    @State private var swipeStarted: Date?
-
-    /// Exécute l'action d'un bouton, sauf si le toucher faisait partie d'un balayage.
-    private func tap(_ action: () -> Void) {
-        if let s = swipeStarted, Date.now.timeIntervalSince(s) < 0.8 { return }
-        action()
-    }
-
-    /// Ligne de recette dont on modifie la quantité, pour ce plat uniquement.
-    struct ItemEdit: Identifiable {
-        let entry: PlanEntry
-        let item: RecipeItem
-        var id: PersistentIdentifier { item.persistentModelID }
-    }
+    @State private var edition: EditionPlat?
+    @State private var savingLone: LoneToRecipe?
+    @Environment(\.dynamicTypeSize) private var typeSize
+    /// Kcal sous la date, dans le bandeau des jours.
+    @ScaledMetric(relativeTo: .caption2) private var kcalSize: CGFloat = 10.5
+    private let size = TaillesRepas()
+    /// Semaine affichée dans le bandeau, propre à cette vue : elle repart de la semaine du jour à chaque ouverture.
+    /// Partagée avec le planning, elle pouvait recevoir, à la fermeture du bandeau, la première semaine de sa plage
+    /// (un an plus tôt), qui revenait à l'ouverture suivante.
+    @State private var shownWeek: DayKey?
 
     var body: some View {
-        let dayEntries = entries.on(day)
+        let dayEntries = index.entries(on: day)
         let t = dayEntries.map(\.totals).sum
         let target = settings.targetKcal
 
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             strip(target)
-            totalCard(t, target: target)
+                .padding(.bottom, 12)
 
-            if dayEntries.isEmpty { emptyDay }
+            totalCard(t, target)
+                .onScrollVisibilityChange(threshold: 0.2) { visible in
+                    withAnimation(.snappy) { totalCardHidden = !visible }
+                }
 
-            VStack(alignment: .leading, spacing: 24) {
-                ForEach(0..<4, id: \.self) { s in
-                    slotSection(s, dayEntries.filter { $0.slot == s })
+            if dayEntries.isEmpty {
+                VStack(spacing: 2) {
+                    Text("Rien de prévu pour \(Days.weekday(day).lowercased()).")
+                    Text("Ajouter un plat, ou copier une journée depuis la semaine.")
+                }
+                .font(.subheadline).foregroundStyle(Color.texte2)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 16)
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(Repas.allCases) { s in
+                    slotSection(s, dayEntries.filter { $0.repas == s })
                 }
             }
+            .padding(.top, 24)
         }
         .contentShape(.rect)
-        .sheet(item: $editingItem) { edit in
-            if let g = edit.item.ingredient {
-                let e = edit.entry, it = edit.item
-                QuantitySheet(ingredient: g, initial: e.qty(for: it) * e.x,
-                              note: "Modifie seulement ce plat du \(Days.longLabel(e.date).lowercased()). La recette n'est pas changée.",
-                              original: it.qty * e.x,
-                              onReset: { withAnimation(.snappy) { e.resetQty(for: it) } }) { q in
-                    withAnimation(.snappy) { e.setQty(q, for: it) }
-                }
-            }
-        }
-        .sheet(item: $editingQty) { e in
-            if let g = e.ingredient {
-                QuantitySheet(ingredient: g, initial: e.qty) { e.qty = $0 }
-            }
-        }
+        .editionPlat($edition)
+        .saveLoneAsRecipe($savingLone)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("jour-\(day)")
-        // Balayer : gauche → jour suivant, droite → jour précédent, même en partant d'un bouton.
-        .gesture(HorizontalSwipe(onBegin: { swipeStarted = .now }) { step in
-            withAnimation(.modeSwitch) { day = Days.adding(step, to: day) }
-        })
         .sensoryFeedback(.selection, trigger: day)
     }
 
-    /// Bandeau des 7 jours : abréviation mono, chiffre Expanded, jauge du jour.
-    /// Le jour choisi est en encre pleine : c'est le point d'arrivée de la pastille qui s'envole de la semaine.
-    private func strip(_ target: Double) -> some View {
-        HStack(spacing: 6) {
-            ForEach(stripDays, id: \.self) { d in
-                let k = entries.totals(d).kcal
-                let on = d == day
-                Button { tap { withAnimation(.modeSwitch) { day = d } } } label: {
-                    VStack(spacing: 2) {
-                        Text(Days.shortWeekday(d)).font(.system(size: 9, weight: .medium).monospaced())
-                            .textCase(.uppercase).kerning(0.6)
-                        Text(Days.dayNumber(d)).font(.title3.weight(.bold).width(.expanded)).monospacedDigit()
-                            .lineLimit(1).minimumScaleFactor(0.7)
-                        Capsule()
-                            .fill(on && k > 0 && Theme.gauge(kcal: k, target: target) == Theme.ink ? Theme.bg : Theme.gauge(kcal: k, target: target))
-                            .frame(width: 20, height: 3)
-                            .opacity(k > 0 ? 1 : (on ? 0.35 : 1))
-                    }
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .foregroundStyle(on ? Theme.bg : Theme.ink)
-                    .opacity(d < Days.today && !on ? 0.55 : 1)
-                    .background {
-                        if on {
-                            RoundedRectangle(cornerRadius: Theme.Radius.cell).fill(Theme.ink)
-                                .matchedGeometryEffect(id: "jour", in: ns)
-                        } else {
-                            RoundedRectangle(cornerRadius: Theme.Radius.cell).fill(Theme.surface)
-                                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.cell).strokeBorder(Theme.line))
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Days.longLabel(d) + (k > 0 ? ", \(Fmt.n0(k)) kcal" : ""))
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
-    }
-
-    /// Carte « étiquette » du total : filet de 3 pt, chiffre héros, jauge des kcal et jauges des macros.
-    private func totalCard(_ t: Macros, target: Double) -> some View {
-        let rest = target - t.kcal
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Total du jour").sectionLabel()
-                Spacer()
-                Text(rest >= 0 ? "Reste \(Fmt.n0(rest)) kcal" : "Dépassé de \(Fmt.n0(-rest)) kcal")
-                    .sectionLabel(rest >= 0 ? Theme.muted : Theme.over)
-            }
-            LabelRule()
+    /// Carte total en verre : kcal du jour sur l'objectif, puis les trois macros.
+    private func totalCard(_ t: Macros, _ target: Double) -> some View {
+        let over = Seuil.depasse(t.kcal, objectif: target)
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Fmt.n0(t.kcal)).heroNumber()
-                    .foregroundStyle(t.kcal > target ? Theme.over : Theme.ink)
+                Text(Fmt.n0(t.kcal)).police(.totalCarte)
+                    .foregroundStyle(t.kcal == 0 ? Color.texte3 : over ? Color.depassement : Color.texte)
                     .contentTransition(.numericText(value: t.kcal))
-                Text("/ \(Fmt.n0(target)) kcal").foregroundStyle(Theme.muted).monospacedDigit()
+                Text("/ \(Fmt.n0(target)) kcal").font(.system(size: size.totalUnit)).foregroundStyle(Color.texte2)
             }
-            .lineLimit(1).minimumScaleFactor(0.6)
-            ProgressBar(fraction: target > 0 ? t.kcal / target : 0,
-                        color: t.kcal > target ? Theme.over : Theme.accent)
+            .monospacedDigit()
+            BarreObjectif(valeur: t.kcal, objectif: target, couleur: .remplissageKcal, piste: .pisteCarteTotal, hauteur: 6)
                 .animation(.snappy, value: t.kcal)
-            if t.kcal > 0 {
-                MacroBars(totals: t, targets: settings.targets)
-                    .padding(.top, 6)
+                .padding(.top, 8)
+            MacroBars(totals: t, targets: settings.targets)
+                .padding(.top, 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .carteTotal()
+    }
+
+    /// Début de la semaine d'aujourd'hui (lundi ou aujourd'hui, selon le réglage).
+    private var homeWeek: DayKey { Days.weekStart(Days.today, fromMonday: settings.weekFromMonday) }
+
+    /// Début de la semaine du bandeau qui contient `d`.
+    private func week(of d: DayKey) -> DayKey { Days.weekStart(containing: d, home: homeWeek) }
+
+    /// Bandeau qui défile par semaine entière, un an avant et après la semaine d'aujourd'hui.
+    /// Toucher une puce ouvre ce jour ; faire défiler seul ne change pas le jour affiché.
+    private func strip(_ target: Double) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                LazyHStack(spacing: 0) {
+                    // Identifiées par leur premier jour dans le ForEach lui-même : un `.id()` posé sur la page n'existe
+                    // que pour les pages déjà construites, et l'iPhone ne trouvait pas la semaine du jour.
+                    ForEach((-52...52).map { Days.adding($0 * 7, to: homeWeek) }, id: \.self) { start in
+                        Grid(horizontalSpacing: 5) {
+                            GridRow {
+                                ForEach(Days.range(from: start, count: 7), id: \.self) { d in stripChip(d, target) }
+                            }
+                        }
+                        // Marge d'écran dans chaque page : les semaines voisines arrivent depuis le bord de l'écran.
+                        .padding(.horizontal, Espace.marge)
+                        .containerRelativeFrame(.horizontal)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            // Jamais vide, dès la première mise en page : sans semaine choisie, celle du jour affiché (une ancre
+            // `defaultScrollAnchor` ralentissait le passage à la vue Jour). Sert aussi à suivre le défilement du doigt.
+            .scrollPosition(id: Binding(get: { shownWeek ?? week(of: day) }, set: { if let w = $0 { shownWeek = w } }))
+            .scrollIndicators(.hidden)
+            .padding(.horizontal, -Espace.marge)
+            // Placement explicite dès que la largeur est connue (mise en page réelle des pages) : la liaison seule
+            // peut croire le bandeau en place alors qu'il s'est posé sur la première page.
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                guard width > 0 else { return }
+                let w = shownWeek ?? week(of: day)
+                DispatchQueue.main.async { proxy.scrollTo(w) }
+            }
+            .onChange(of: shownWeek) { stripWeek = shownWeek }
+            // Jour changé ailleurs, ou bouton du jour : le bandeau rejoint la semaine du jour affiché.
+            .onChange(of: day) { showDayWeek(proxy) }
+            .onChange(of: recenter) { showDayWeek(proxy) }
+        }
+    }
+
+    private func showDayWeek(_ proxy: ScrollViewProxy) {
+        let w = week(of: day)
+        withAnimation(.snappy) {
+            shownWeek = w
+            proxy.scrollTo(w)
+        }
+    }
+
+    private func stripChip(_ d: DayKey, _ target: Double) -> some View {
+        let k = index.totals(on: d).kcal
+        let on = d == day
+        return Button { withAnimation(.modeSwitch) { day = d } } label: {
+            VStack(spacing: 2) {
+                Text(Days.shortWeekday(d)).police(.jourBandeau)
+                    .opacity(0.85)
+                Text(Days.dayNumber(d)).police(.dateBandeau)
+                if !typeSize.isAccessibilitySize {
+                    Text(k > 0 ? Fmt.n0(k) : "—").font(.system(size: kcalSize)).monospacedDigit()
+                        .foregroundStyle(on ? Color.surAccent : Color.texte2)
+                }
+                // Sur la puce bleue, piste opaque : la couleur de validation reste lisible, en clair comme en sombre.
+                BarreObjectif(valeur: k, objectif: target, couleur: Seuil.couleurJour(k, objectif: target, sinon: .texte2),
+                              piste: on ? .surface : .surface2, hauteur: 3)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 2)
+            }
+            // Réduction automatique (coûteuse) seulement quand le texte est agrandi.
+            .lineLimit(1).minimumScaleFactor(typeSize > .large ? 0.7 : 1)
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .foregroundStyle(on ? Color.surAccent : Color.texte)
+            .opacity(d < Days.today && !on ? 0.6 : 1)
+            .background {
+                // La puce bleue glisse d'un jour à l'autre, et vient du tampon de date touché dans la semaine.
+                if on {
+                    RoundedRectangle(cornerRadius: Arrondi.puceJour).fill(Color.accentColor)
+                        .matchedGeometryEffect(id: "jour", in: ns)
+                } else {
+                    RoundedRectangle(cornerRadius: Arrondi.puceJour).fill(Color.surface)
+                }
             }
         }
-        .card()
+        .buttonStyle(.plain)
+        .accessibilityLabel(Days.longLabel(d))
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
-    /// Jour vide : une étiquette vierge et une seule action.
-    private var emptyDay: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "doc.plaintext").font(.system(size: 40, weight: .light)).foregroundStyle(Theme.muted)
-                .padding(.bottom, 4)
-            Text("\(Days.weekday(day)) est encore vide").font(.headline).foregroundStyle(Theme.ink)
-            Text("Ajoute un plat, ou copie une journée déjà prévue depuis le menu •••")
-                .font(.subheadline).foregroundStyle(Theme.muted).multilineTextAlignment(.center)
-            Button { tap { add(0) } } label: { Label("Ajouter un plat", systemImage: "plus") }
-                .buttonStyle(.primary)
-                .padding(.top, 6)
-        }
-        .padding(.vertical, 26).padding(.horizontal, 20)
-        .frame(maxWidth: .infinity)
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card)
-            .strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 4])))
-    }
+    /// Un repas : en-tête sur deux lignes, puis une seule carte qui contient ses plats et la ligne « + Ajouter ».
+    private func slotSection(_ s: Repas, _ list: [PlanEntry]) -> some View {
+        let valid = list.filter(\.isValid)
+        return VStack(alignment: .leading, spacing: 8) {
+            slotHeader(s, valid)
 
-    /// Repas : étiquette mono, total, « + », répartition G · P · L puis les plats.
-    private func slotSection(_ s: Int, _ list: [PlanEntry]) -> some View {
-        let m = list.map(\.totals).sum
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(Week.slots[s]).sectionLabel(Theme.ink)
-                Spacer()
-                if m.kcal > 0 {
-                    Text("\(Text(Fmt.n0(m.kcal)).font(.callout.weight(.semibold).width(.expanded))) \(Text("kcal").font(.caption).foregroundStyle(Theme.muted))")
-                        .monospacedDigit()
+            VStack(alignment: .leading, spacing: 0) {
+                let lone = valid.filter { $0.ingredient != nil }
+                ForEach(valid) { e in
+                    entryRow(e, lone: lone)
+                    Rectangle().fill(Color.filetCarte).frame(height: 1).padding(.leading, 14)
                 }
-                Button { tap { add(s) } } label: {
-                    Image(systemName: "plus").font(.body.weight(.medium)).foregroundStyle(Theme.accent)
-                        .frame(width: 32, height: 32).contentShape(.rect)
+                Button { add(s) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus").font(.system(size: size.addIcon, weight: .semibold))
+                        Text("Ajouter").font(.system(size: size.add, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.leading, 14)
+                    .frame(maxWidth: .infinity, minHeight: size.addRow, alignment: .leading)
+                    .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Ajouter un plat")
             }
-            .padding(.horizontal, 2)
-
-            if list.isEmpty {
-                Rectangle().fill(Theme.line).frame(height: 1)
-            } else {
-                if list.count > 1 { MacroSplit(m: m, height: 3) }
-                ForEach(list) { e in entryRow(e) }
-            }
+            .background(Color.surface, in: .rect(cornerRadius: 14))
+            .clipShape(.rect(cornerRadius: 14))
         }
     }
 
-    /// Carte de plat : titre, méta, micro-barre G · P · L, chevron pour déplier les ingrédients.
-    /// Un ingrédient seul montre sa quantité en pastille. Appui long : retirer.
-    @ViewBuilder
-    private func entryRow(_ e: PlanEntry) -> some View {
-        if e.isValid {
-            let open = expanded.contains(e.persistentModelID)
-            let t = e.totals
-            VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    tap {
-                        if e.ingredient != nil {
-                            editingQty = e
-                        } else {
-                            withAnimation(.snappy) {
-                                if open { expanded.remove(e.persistentModelID) } else { expanded.insert(e.persistentModelID) }
-                            }
-                        }
+    /// « PETIT-DÉJEUNER ……… 636 kcal », puis « G 86 · P 25 · L 20 g » et la barre de répartition.
+    private func slotHeader(_ s: Repas, _ list: [PlanEntry]) -> some View {
+        let m = list.map(\.totals).sum
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(s.nom)
+                    .font(.system(size: size.slotName, weight: .semibold))
+                    .tracking(size.slotName * 0.06)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Color.texte2)
+                Spacer()
+                if m.kcal > 0 {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(Fmt.n0(m.kcal)).fontWeight(.semibold).foregroundStyle(Color.texte)
+                        Text("kcal").foregroundStyle(Color.texte2)
                     }
-                } label: {
-                    HStack(alignment: .center, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(e.title).font(.headline).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
-                            IngredientMacros(m: t)
-                            MacroSplit(m: t, height: 3).frame(width: 140).padding(.top, 3)
-                        }
-                        Spacer(minLength: 4)
-                        if let g = e.ingredient {
-                            QuantityChip(text: Fmt.cook(e.qty * e.x, unit: g.unit))
-                        } else {
-                            Image(systemName: "chevron.down")
-                                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
-                                .rotationEffect(.degrees(open ? 180 : 0))
-                                .frame(width: 30, height: 30)
-                                .background(Theme.surface2, in: .circle)
-                        }
-                    }
-                    .padding(.vertical, 14).padding(.horizontal, 16)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint(e.ingredient != nil ? "Modifier la quantité" : open ? "Masquer les ingrédients" : "Afficher les ingrédients")
-                .accessibilityAction(named: "Retirer") { withAnimation(.snappy) { context.delete(e) } }
-
-                if open, let r = e.recipe {
-                    VStack(spacing: 0) {
-                        ForEach(r.sortedItems) { it in
-                            if let g = it.ingredient {
-                                let q = e.qty(for: it) * e.x
-                                Rectangle().fill(Theme.line).frame(height: 1)
-                                // Toute la ligne ouvre la saisie ; la pastille ✎ montre que c'est modifiable.
-                                Button { tap { editingItem = ItemEdit(entry: e, item: it) } } label: {
-                                    HStack(alignment: .center) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(g.name).font(.body).foregroundStyle(Theme.ink)
-                                            IngredientMacros(m: g.macros(qty: q))
-                                        }
-                                        Spacer(minLength: 8)
-                                        QuantityChip(text: Fmt.cook(q, unit: g.unit), modified: e.isOverridden(it))
-                                    }
-                                    .padding(.vertical, 4)
-                                    .contentShape(.rect)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityHint("Modifier la quantité pour ce plat")
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16).padding(.bottom, 6)
-                    // Fondu seul : la carte s'agrandit ou se réduit, la liste ne glisse plus par-dessus le titre.
-                    .transition(.opacity)
+                    .font(.system(size: size.slotKcal))
+                    .monospacedDigit()
+                } else {
+                    Text("—").font(.system(size: size.slotKcal)).foregroundStyle(Color.texte3)
                 }
             }
-            .background(Theme.surface, in: .rect(cornerRadius: Theme.Radius.card))
-            .clipShape(.rect(cornerRadius: Theme.Radius.card))
-            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.line.opacity(0.7)))
-            .contentShape(.contextMenuPreview, .rect(cornerRadius: Theme.Radius.card))
-            .contextMenu {
-                if e.recipe != nil {
-                    Button(open ? "Replier" : "Voir les ingrédients", systemImage: "list.bullet") {
+            if !list.isEmpty {
+                // Récap du repas : répartition des kcal entre G / P / L.
+                HStack(spacing: 10) {
+                    MacroLine(m: m, unit: " g")
+                        .font(.system(size: size.slotMacros)).foregroundStyle(Color.texte2)
+                        .lineLimit(1).fixedSize()
+                    BarreRepartition(g: m.c, p: m.p, l: m.f, hauteur: 3)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    /// `lone` : les ingrédients seuls du repas, qu'un appui long sur l'un d'eux propose d'enregistrer comme recette.
+    private func entryRow(_ e: PlanEntry, lone: [PlanEntry]) -> some View {
+        let open = expanded.contains(e.persistentModelID)
+        let t = e.totals
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                Button {
+                    if e.isFree {
+                        edition = .libre(e)
+                    } else if e.ingredient != nil {
+                        edition = .quantite(e)
+                    } else {
                         withAnimation(.snappy) {
                             if open { expanded.remove(e.persistentModelID) } else { expanded.insert(e.persistentModelID) }
                         }
                     }
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            if e.isFree {
+                                Image(systemName: FreeMealStyle.icon)
+                                    .font(.system(size: size.dishMeta, weight: .semibold))
+                                    .foregroundStyle(Color.libre)
+                                    .accessibilityHidden(true)
+                            }
+                            Text(e.title).lineLimit(1).truncationMode(.tail)
+                            // À la pièce : le nombre est dans la pastille à droite, pas en « ×2 ».
+                            if let r = e.recipe, !r.byPiece, e.x != 1 {
+                                Text(Fmt.x(e.x)).foregroundStyle(Color.accentColor).fixedSize()
+                            }
+                            // Plat (recette) : chevron pour montrer qu'il se déplie. Ingrédient seul : rien.
+                            if e.recipe != nil {
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: size.chevron, weight: .bold))
+                                    .foregroundStyle(Color.texte3)
+                                    .rotationEffect(.degrees(open ? 180 : 0))
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .font(.system(size: size.dishName, weight: .semibold))
+                        Group {
+                            if let m = e.free {
+                                // « ≈ 1 200 kcal · estimé », ou les macros quand elles sont précisées.
+                                Text("\(Text(FreeMealStyle.kcal(m)).foregroundStyle(Color.libre)) · \(m.hasMacros ? MacroLine.text(t) : Text("estimé"))")
+                            } else if let g = e.ingredient {
+                                Text("\(Fmt.cook(e.qty * e.x, unit: g.unit)) · \(Fmt.n0(t.kcal)) kcal · \(MacroLine.text(t))")
+                            } else {
+                                Text("\(Fmt.n0(t.kcal)) kcal · \(MacroLine.text(t))")
+                            }
+                        }
+                        .font(.system(size: size.dishMeta)).foregroundStyle(Color.texte2)
+                        .lineLimit(1)
+                    }
+                    .monospacedDigit()
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                    .padding(.vertical, 8)
+                    .contentShape(.rect)
                 }
-                Button("Retirer", systemImage: "trash", role: .destructive) {
+                .buttonStyle(.plain)
+                .accessibilityHint(e.isFree ? "Modifier le repas libre" : e.ingredient != nil ? "Modifier la quantité" : open ? "Masquer les ingrédients" : "Afficher les ingrédients")
+
+                // Plat à la pièce : « 2 pièces » en pastille, toucher pour changer le nombre.
+                if let r = e.recipe, r.byPiece {
+                    Button { edition = .pieces(e) } label: { QuantityChip(text: Fmt.pieces(e.x)) }
+                        .buttonStyle(.plain)
+                        .padding(.leading, 8)
+                        .accessibilityLabel("\(Fmt.pieces(e.x)), modifier le nombre")
+                }
+
+                Button("Retirer \(e.title)", systemImage: "xmark") {
                     withAnimation(.snappy) { context.delete(e) }
                 }
+                .labelStyle(.iconOnly)
+                .font(.system(size: size.cross, weight: .bold))
+                .foregroundStyle(Color.texte3)
+                .frame(width: 40, height: 40)
+                .contentShape(.rect.inset(by: -2))
+                .buttonStyle(.borderless)
             }
-        }
-    }
-}
+            .padding(EdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 2))
+            // Repas libre : ligne sur fond sable, pour le reconnaître dans la carte du repas.
+            // Rectangle explicite : un simple fond reprendrait les coins arrondis de la carte.
+            // Toujours présent, pour que l'aperçu de l'appui long garde le fond de la ligne.
+            .background { Rectangle().fill(e.isFree ? Color.libreFond : Color.surface) }
+            .contextMenu {
+                if e.ingredient != nil && lone.count >= 2 {
+                    Button(LoneToRecipe.title(lone.count), systemImage: LoneToRecipe.icon) {
+                        savingLone = LoneToRecipe(entries: lone)
+                    }
+                }
+            }
 
-/// Stepper −/+ de la portion, par pas de 0,1. Retiré de l'écran pour l'instant, gardé pour plus tard.
-struct PortionStepper: View {
-    @Binding var x: Double
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Button("Réduire la portion", systemImage: "minus") { x = Nutrition.stepped(x, by: -1) }
-                .disabled(x <= 0.1)
-            Text(Fmt.x(x))
-                .font(.footnote.bold()).monospacedDigit()
-                .frame(minWidth: 44)
-                .contentTransition(.numericText(value: x))
-            Button("Augmenter la portion", systemImage: "plus") { x = Nutrition.stepped(x, by: 1) }
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .font(.subheadline.bold())
-        .buttonRepeatBehavior(.enabled)
-        .frame(height: 34)
-        .padding(.horizontal, 8)
-        .background(Theme.bg, in: .capsule)
-        .overlay(Capsule().strokeBorder(Theme.line))
-        .sensoryFeedback(.increase, trigger: x)
-        .animation(.snappy, value: x)
-    }
-}
-
-struct CopyDaySheet: View {
-    var source: DayKey
-    var entries: [PlanEntry]
-    @Environment(\.modelContext) private var context
-    @Environment(Toast.self) private var toast
-    @Environment(\.dismiss) private var dismiss
-    @State private var selected: Set<DayKey> = []
-
-    /// Les 14 prochains jours (aujourd'hui compris), sauf le jour copié.
-    private var targets: [DayKey] { Days.range(from: Days.today, count: 14).filter { $0 != source } }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Group {
-                Section {
-                    ForEach(targets, id: \.self) { d in
-                        Button {
-                            if selected.contains(d) { selected.remove(d) } else { selected.insert(d) }
-                        } label: {
-                            HStack {
-                                Text(Days.longLabel(d)).foregroundStyle(.primary)
-                                if let r = Days.relative(d) { Text(r).foregroundStyle(Theme.muted) }
-                                Spacer()
-                                if selected.contains(d) { Image(systemName: "checkmark").foregroundStyle(Theme.accent).bold() }
+            if open, let r = e.recipe {
+                let items = r.sortedItems.filter { $0.ingredient != nil }
+                VStack(spacing: 0) {
+                    ForEach(items) { it in
+                        if let g = it.ingredient {
+                            let q = e.qty(for: it) * e.x
+                            // Toute la ligne ouvre la saisie ; la quantité en pastille montre que c'est modifiable.
+                            Button { edition = .ligne(e, it) } label: {
+                                HStack(alignment: .center) {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(g.name).font(.system(size: size.ingName))
+                                        let m = g.macros(qty: q)
+                                        Text("\(Fmt.n0(m.kcal)) kcal · \(MacroLine.text(m))")
+                                            .font(.system(size: size.ingMeta)).foregroundStyle(Color.texte2)
+                                            .monospacedDigit()
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    Spacer(minLength: 8)
+                                    QuantityChip(text: Fmt.cook(q, unit: g.unit), modified: e.isOverridden(it))
+                                }
+                                .frame(minHeight: 32)
+                                .padding(EdgeInsets(top: 6, leading: 26, bottom: 6, trailing: 10))
+                                .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Modifier la quantité pour ce plat")
+                            if it.persistentModelID != items.last?.persistentModelID {
+                                Rectangle().fill(Color.filetCarte).frame(height: 1).padding(.leading, 26)
                             }
                         }
                     }
-                } footer: {
-                    Text("Les jours choisis prennent exactement les mêmes plats et portions. Leur contenu actuel est remplacé.")
                 }
-                }
-                .listRowBackground(Theme.surface)
-            }
-            .paperList()
-            .navigationTitle("Copier le \(Days.longLabel(source).lowercased())")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Annuler", role: .cancel) { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Copier", role: .confirm) {
-                        PlanActions.copy(day: source, to: selected, entries: entries, in: context)
-                        toast.show("Copié vers \(selected.count) jour\(selected.count > 1 ? "s" : "")")
-                        dismiss()
-                    }
-                    .disabled(selected.isEmpty)
-                }
+                .padding(.vertical, 2)
+                .background { Rectangle().fill(Color.fondDeplie) }
+                .overlay(alignment: .top) { Color.filetCarte.frame(height: 1) }
+                // Fondu seul : la carte s'agrandit ou se réduit, la liste ne glisse plus par-dessus le titre.
+                .transition(.opacity)
             }
         }
-        .presentationDetents([.medium, .large])
     }
 }
 
-/// Balayage horizontal qui annule le toucher des boutons sous le doigt dès qu'il démarre :
-/// partir de « Ajouter un plat » ou d'un plat change de jour sans déclencher le bouton.
-/// Ne démarre que pour un mouvement nettement horizontal, le défilement vertical reste libre.
-struct HorizontalSwipe: UIGestureRecognizerRepresentable {
-    /// Appelé dès que le balayage démarre (avant que le doigt ne se relève).
-    var onBegin: () -> Void = {}
-    /// +1 = jour suivant (balayage vers la gauche), -1 = jour précédent.
-    var onSwipe: (Int) -> Void
-
-    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
-        let g = UIPanGestureRecognizer()
-        g.delegate = context.coordinator
-        g.cancelsTouchesInView = true
-        return g
-    }
-
-    func handleUIGestureRecognizerAction(_ g: UIPanGestureRecognizer, context: Context) {
-        if g.state == .began { onBegin() }
-        guard g.state == .ended else { return }
-        let t = g.translation(in: g.view), v = g.velocity(in: g.view)
-        // Assez loin, ou un petit coup rapide.
-        guard abs(t.x) > 60 || abs(v.x) > 600 else { return }
-        onSwipe(t.x < 0 ? 1 : -1)
-    }
-
-    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-            guard let pan = g as? UIPanGestureRecognizer else { return true }
-            let v = pan.velocity(in: pan.view)
-            return abs(v.x) > abs(v.y) * 1.5
-        }
-
-        func gestureRecognizer(_ g: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
-    }
+/// Tailles de la liste des repas (vue Jour), qui suivent la taille de texte dynamique.
+private struct TaillesRepas: DynamicProperty {
+    @ScaledMetric(relativeTo: .caption) var slotName: CGFloat = 12
+    @ScaledMetric(relativeTo: .footnote) var slotKcal: CGFloat = 13
+    @ScaledMetric(relativeTo: .caption) var slotMacros: CGFloat = 12
+    @ScaledMetric(relativeTo: .subheadline) var dishName: CGFloat = 15
+    @ScaledMetric(relativeTo: .caption) var dishMeta: CGFloat = 12
+    @ScaledMetric(relativeTo: .caption2) var cross: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2) var chevron: CGFloat = 10
+    /// « / 2 600 kcal » à côté du total de la carte.
+    @ScaledMetric(relativeTo: .subheadline) var totalUnit: CGFloat = 14
+    @ScaledMetric(relativeTo: .subheadline) var ingName: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption2) var ingMeta: CGFloat = 11.5
+    @ScaledMetric(relativeTo: .subheadline) var add: CGFloat = 14
+    @ScaledMetric(relativeTo: .subheadline) var addIcon: CGFloat = 14
+    @ScaledMetric(relativeTo: .subheadline) var addRow: CGFloat = 38
 }

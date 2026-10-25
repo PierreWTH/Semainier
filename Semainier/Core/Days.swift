@@ -5,11 +5,13 @@ import Foundation
 typealias DayKey = Int
 
 nonisolated enum Days {
-    private static var calendar: Calendar {
+    /// Créé une seule fois : ces fonctions sont appelées des milliers de fois par rendu.
+    /// Le fuseau suit celui de l'appareil s'il change.
+    private static let calendar: Calendar = {
         var c = Calendar(identifier: .gregorian)
-        c.timeZone = .current
+        c.timeZone = .autoupdatingCurrent
         return c
-    }
+    }()
     private static let fr = Locale(identifier: "fr_FR")
 
     static func key(_ date: Date) -> DayKey {
@@ -41,6 +43,24 @@ nonisolated enum Days {
     static func next(weekday: Int, from start: DayKey = today) -> DayKey {
         let w = weekdayIndex(start)
         return adding((weekday - w + 7) % 7, to: start)
+    }
+
+    /// Premier jour de la semaine affichée qui contient `key` : le lundi précédent (ou le jour même),
+    /// ou `key` lui-même quand la semaine part du jour courant.
+    static func weekStart(_ key: DayKey, fromMonday: Bool) -> DayKey {
+        fromMonday ? adding(-weekdayIndex(key), to: key) : key
+    }
+
+    /// Début de la semaine qui contient `key`, les semaines partant de `home` par pas de 7 jours
+    /// (vers l'avant comme vers l'arrière).
+    static func weekStart(containing key: DayKey, home: DayKey) -> DayKey {
+        let n = distance(from: home, to: key)
+        return adding(Int((Double(n) / 7).rounded(.down)) * 7, to: home)
+    }
+
+    /// Jours désignés par leur décalage depuis `today` (0 = aujourd'hui) : jours de courses et « À préparer ».
+    static func chosen(_ offsets: [Int], from today: DayKey = today) -> Set<DayKey> {
+        Set(offsets.map { adding($0, to: today) })
     }
 
     static func weekdayIndex(_ key: DayKey) -> Int { Week.weekdayIndex(date(key), calendar: calendar) }
@@ -78,6 +98,13 @@ nonisolated enum Days {
         let sameMonth = start / 100 == end / 100
         let first = start % 100 == 1 ? "1er" : String(start % 100)
         return sameMonth ? "du \(first) au \(dayMonth(end))" : "du \(dayMonth(start)) au \(dayMonth(end))"
+    }
+
+    /// « 16 – 22 oct. », ou « 28 sept. – 4 oct. » à cheval sur deux mois.
+    static func shortRangeText(_ start: DayKey, _ end: DayKey) -> String {
+        let month = { (k: DayKey) in date(k).formatted(.dateTime.month(.abbreviated).locale(fr)) }
+        let first = start / 100 == end / 100 ? String(start % 100) : "\(start % 100) \(month(start))"
+        return "\(first) – \(end % 100) \(month(end))"
     }
 
     /// Format des sauvegardes : « 2026-10-15 ».
