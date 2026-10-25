@@ -15,22 +15,6 @@ struct NutritionTests {
         #expect(Nutrition.macros(per: egg, unit: .pc, qty: 3).kcal == 240)
     }
 
-    @Test func status() {
-        #expect(Nutrition.status(kcal: 0, target: 2600) == .none)
-        #expect(Nutrition.status(kcal: 2678, target: 2600) == .ok)   // +3 %
-        #expect(Nutrition.status(kcal: 2679, target: 2600) == .warn)
-        #expect(Nutrition.status(kcal: 2392, target: 2600) == .warn) // −8 %
-        #expect(Nutrition.status(kcal: 2391, target: 2600) == .bad)
-    }
-
-    @Test func fitRoundsTo005WithMinimum() {
-        // 2000 kcal → k = 1,3
-        #expect(Nutrition.fitted([1, 1, 0.5], dayKcal: 2000, target: 2600) == [1.3, 1.3, 0.65])
-        // Très au-dessus : jamais sous 0,1
-        #expect(Nutrition.fitted([0.1], dayKcal: 26000, target: 2600) == [0.1])
-        #expect(Nutrition.fitted([1], dayKcal: 0, target: 2600) == nil)
-    }
-
     @Test func stepper() {
         #expect(Nutrition.stepped(1, by: 1) == 1.1)
         #expect(Nutrition.stepped(1.15, by: -1) == 1.05)
@@ -91,9 +75,15 @@ struct FmtTests {
     }
 }
 
+/// Fiche Open Food Facts écrite en dictionnaire, passée par le JSON comme une vraie réponse.
+private func parseOFF(_ product: [String: Any]) -> ScannedProduct {
+    let data = try! JSONSerialization.data(withJSONObject: product)
+    return OpenFoodFacts.parse(try! JSONDecoder().decode(OpenFoodFacts.Produit.self, from: data))
+}
+
 struct OpenFoodFactsTests {
     @Test func parsesProduct() {
-        let p = OpenFoodFacts.parse([
+        let p = parseOFF([
             "product_name": "Skyr nature",
             "brands": "Siggi's, Arla",
             "quantity": "450 g",
@@ -108,7 +98,7 @@ struct OpenFoodFactsTests {
     }
 
     @Test func kcalFromKJAndLiquid() {
-        let p = OpenFoodFacts.parse(["product_name": "Jus", "quantity": "1 L", "nutriments": ["energy_100g": 184.1]])
+        let p = parseOFF(["product_name": "Jus", "quantity": "1 L", "nutriments": ["energy_100g": 184.1]])
         #expect(p.unit == .ml)
         #expect(p.kcal == 44)
         #expect(p.rayon == .epicerie)
@@ -172,7 +162,7 @@ struct DaysTests {
 struct KcalCheckTests {
     @Test func stMoretWrongKcalIsCorrectedFromKJ() {
         // Fiche réelle : 765 kcal affichées, 551 kJ, G 5 · P 10 · L 8 (≈ 132 kcal).
-        let p = OpenFoodFacts.parse([
+        let p = parseOFF([
             "product_name": "St Moret Ligne & Plaisir 8%",
             "nutriments": ["energy-kcal_100g": 765, "energy-kj_100g": 551, "energy_100g": 551,
                            "proteins_100g": 10, "carbohydrates_100g": 5, "fat_100g": 8],
@@ -182,7 +172,7 @@ struct KcalCheckTests {
     }
 
     @Test func consistentKcalIsKept() {
-        let p = OpenFoodFacts.parse(["nutriments": ["energy-kcal_100g": 64, "energy-kj_100g": 268,
+        let p = parseOFF(["nutriments": ["energy-kcal_100g": 64, "energy-kj_100g": 268,
                                                     "proteins_100g": 11, "carbohydrates_100g": 4, "fat_100g": 0.2]])
         #expect(p.kcal == 64)
         #expect(p.kcalNote == nil)
@@ -209,10 +199,15 @@ struct KcalCheckTests {
 
 struct OverTests {
     @Test func overAfterThreePercent() {
-        #expect(!Nutrition.isOver(277, target: 273))   // +1,5 % : toléré
-        #expect(!Nutrition.isOver(281, target: 273))   // +2,9 %
-        #expect(Nutrition.isOver(282, target: 273))    // +3,3 %
-        #expect(!Nutrition.isOver(50, target: 0))
+        #expect(!Nutrition.depasse(277, objectif: 273))   // +1,5 % : toléré
+        #expect(!Nutrition.depasse(281, objectif: 273))   // +2,9 %
+        #expect(Nutrition.depasse(282, objectif: 273))    // +3,3 %
+        #expect(!Nutrition.depasse(50, objectif: 0))
+        #expect(Nutrition.etatJour(kcal: 2650, objectif: 2600) == .dansLaCible)   // +1,9 %
+        #expect(Nutrition.etatJour(kcal: 2530, objectif: 2600) == .dansLaCible)   // −2,7 %
+        #expect(Nutrition.etatJour(kcal: 2700, objectif: 2600) == .auDela)        // +3,8 %
+        #expect(Nutrition.etatJour(kcal: 2400, objectif: 2600) == .sousObjectif)
+        #expect(Nutrition.etatJour(kcal: 0, objectif: 2600) == .sousObjectif)
     }
 }
 

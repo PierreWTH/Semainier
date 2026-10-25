@@ -17,7 +17,15 @@ nonisolated struct Backup: Codable {
         var pieceWeight: Double?
     }
     struct Item: Codable { var ing: String; var qty: Double }
-    struct Rec: Codable { var id: String; var name: String; var items: [Item] }
+    struct Rec: Codable {
+        var id: String
+        var name: String
+        var items: [Item]
+        /// Se compte à la pièce (absent = à la portion).
+        var byPiece: Bool?
+        /// Se prépare à l'avance (absent = non).
+        var batch: Bool?
+    }
     /// `recipe` pour une recette, ou `ing` + `qty` pour un ingrédient seul.
     struct Entry: Codable {
         var id: String
@@ -32,6 +40,9 @@ nonisolated struct Backup: Codable {
         var x: Double
         /// Quantités modifiées pour ce plat (uid de l'ingrédient → quantité pour 1 portion).
         var overrides: [String: Double]?
+        /// Repas libre : nom et valeurs estimées.
+        var free: String?
+        var kcal, p, c, f: Double?
     }
 
     var v = 1
@@ -76,9 +87,9 @@ nonisolated struct Backup: Codable {
 
     @MainActor static func make(from context: ModelContext) -> Backup {
         let s = PlanActions.settings(in: context)
-        let ings = (try? context.fetch(FetchDescriptor<Ingredient>())) ?? []
-        let recs = (try? context.fetch(FetchDescriptor<Recipe>())) ?? []
-        let entries = (try? context.fetch(FetchDescriptor<PlanEntry>())) ?? []
+        let ings = context.lire(FetchDescriptor<Ingredient>())
+        let recs = context.lire(FetchDescriptor<Recipe>())
+        let entries = context.lire(FetchDescriptor<PlanEntry>())
         return Backup(
             targets: Targets(kcal: s.targetKcal, p: s.targetP, c: s.targetC, f: s.targetF),
             ingredients: ings.map { Ing(id: $0.uid, name: $0.name, unit: $0.unitRaw, kcal: $0.kcal, p: $0.p, c: $0.c, f: $0.f, rayon: $0.rayonRaw, barcode: $0.barcode,
@@ -86,15 +97,21 @@ nonisolated struct Backup: Codable {
             recipes: recs.map { r in
                 Rec(id: r.uid, name: r.name, items: r.sortedItems.compactMap { it in
                     it.ingredient.map { Item(ing: $0.uid, qty: it.qty) }
-                })
+                }, byPiece: r.byPiece ? true : nil, batch: r.batch ? true : nil)
             },
             plan: entries.compactMap { e in
-                if let r = e.recipe {
-                    return Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, recipe: r.uid, x: e.x,
-                                 overrides: e.overrides.isEmpty ? nil : e.overrides)
+                switch e.kind {
+                case .recette(let r):
+                    Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, recipe: r.uid, x: e.x,
+                          overrides: e.overrides.isEmpty ? nil : e.overrides)
+                case .ingredient(let i, let q):
+                    Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, ing: i.uid, qty: q, x: e.x)
+                case .libre(let m):
+                    Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, x: 1, free: m.name,
+                          kcal: m.kcal, p: m.p, c: m.c, f: m.f)
+                case .vide:
+                    nil
                 }
-                if let i = e.ingredient { return Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, ing: i.uid, qty: e.qty, x: e.x) }
-                return nil
             },
             shopDays: s.shopDays,
             checked: Dictionary(uniqueKeysWithValues: s.checked.map { ($0, true) })
@@ -121,6 +138,8 @@ nonisolated struct Backup: Codable {
         var recs: [String: Recipe] = [:]
         for r in recipes {
             let rec = Recipe(name: r.name)
+            rec.byPiece = r.byPiece ?? false
+            rec.batch = r.batch ?? false
             rec.uid = r.id
             context.insert(rec)
             for (n, it) in r.items.enumerated() {
@@ -147,6 +166,9 @@ nonisolated struct Backup: Codable {
                 entry.overrides = e.overrides ?? [:]
             } else if let id = e.ing, let ing = ings[id], let qty = e.qty, qty > 0 {
                 entry = PlanEntry(date: date, slot: slot, ingredient: ing, qty: qty, x: x, order: n)
+            } else if let name = e.free, let kcal = e.kcal, kcal > 0 {
+                entry = PlanEntry(date: date, slot: slot,
+                                  free: FreeMeal(name: name, kcal: kcal, p: e.p ?? 0, c: e.c ?? 0, f: e.f ?? 0), order: n)
             } else {
                 continue
             }

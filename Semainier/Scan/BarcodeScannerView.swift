@@ -26,7 +26,7 @@ struct BarcodeScannerView: View {
                 ContentUnavailableView(
                     "Caméra indisponible",
                     systemImage: "barcode.viewfinder",
-                    description: Text("Saisis le code-barres à la main ci-dessous.")
+                    description: Text("Saisir le code-barres à la main ci-dessous.")
                 )
                 .foregroundStyle(.white)
             }
@@ -44,7 +44,7 @@ struct BarcodeScannerView: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 10) {
-                TextField("Ou tape le code (EAN)", text: $manual)
+                TextField("Ou saisir le code (EAN)", text: $manual)
                     .keyboardType(.numberPad)
                     .focused($typing)
                     .padding(.horizontal, 14)
@@ -77,7 +77,12 @@ private struct DataScanner: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: DataScannerViewController, context: Context) {
         context.coordinator.onCode = onCode
-        if !vc.isScanning { try? vc.startScanning() }
+        guard !vc.isScanning else { return }
+        do {
+            try vc.startScanning()
+        } catch {
+            Journal.scan.error("Caméra indisponible : \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     static func dismantleUIViewController(_ vc: DataScannerViewController, coordinator: Coordinator) {

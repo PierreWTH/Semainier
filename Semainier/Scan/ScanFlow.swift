@@ -11,22 +11,32 @@ struct ScanFlow: ViewModifier {
     @Environment(\.modelContext) private var context
     @State private var editing: IngredientEditTarget?
     @State private var searching = false
+    /// Code lu, traité quand la caméra a fini de se fermer.
+    @State private var scanned: String?
+    /// Ingrédient enregistré, rendu à `onIngredient` quand la fiche a fini de se fermer.
+    @State private var saved: Ingredient?
+    /// « Rescanner » : la caméra rouvre quand la fiche a fini de se fermer.
+    @State private var rescan = false
 
     func body(content: Content) -> some View {
         content
-            .fullScreenCover(isPresented: $isPresented) {
+            .fullScreenCover(isPresented: $isPresented, onDismiss: {
+                guard let code = scanned else { return }
+                scanned = nil
+                Task { await handle(code) }
+            }) {
                 BarcodeScannerView { code in
+                    scanned = code
                     isPresented = false
-                    Task { await handle(code) }
                 }
             }
-            .sheet(item: $editing) { t in
-                IngredientEditor(target: t, onSaved: onIngredient, onRescan: {
+            .sheet(item: $editing, onDismiss: {
+                if let i = saved { saved = nil; onIngredient?(i) }
+                if rescan { rescan = false; isPresented = true }
+            }) { t in
+                IngredientEditor(target: t, onSaved: { saved = $0 }, onRescan: {
+                    rescan = true
                     editing = nil
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(450))
-                        isPresented = true
-                    }
                 })
             }
             .overlay {
@@ -38,15 +48,13 @@ struct ScanFlow: ViewModifier {
             }
     }
 
+    /// Appelé une fois la caméra fermée.
     private func handle(_ code: String) async {
-        // Laisse la caméra se fermer avant d'ouvrir la fiche.
-        try? await Task.sleep(for: .milliseconds(450))
-
         if let existing = PlanActions.ingredient(barcode: code, in: context) {
             if pickExisting, let onIngredient {
                 onIngredient(existing)
             } else {
-                editing = IngredientEditTarget(ingredient: existing, note: "Déjà dans tes ingrédients.")
+                editing = IngredientEditTarget(ingredient: existing, note: "Déjà dans les ingrédients.")
             }
             return
         }
@@ -57,19 +65,19 @@ struct ScanFlow: ViewModifier {
             if let product = try await OpenFoodFacts.lookup(code) {
                 let draft = IngredientDraft(scanned: product, barcode: code)
                 editing = IngredientEditTarget(draft: draft,
-                                               note: "Trouvé sur Open Food Facts. Vérifie les valeurs avant d'enregistrer.",
+                                               note: "Trouvé sur Open Food Facts. Vérifier les valeurs avant d'enregistrer.",
                                                scan: ScanContext(code: code, initial: draft,
                                                                  terms: product.name.replacingOccurrences(of: " · ", with: " ")))
             } else {
                 let draft = IngredientDraft(barcode: code)
                 editing = IngredientEditTarget(draft: draft,
-                                               note: "Produit introuvable sur Open Food Facts. Recopie les valeurs de l'étiquette.",
+                                               note: "Produit introuvable sur Open Food Facts. Recopier les valeurs de l'étiquette.",
                                                scan: ScanContext(code: code, initial: draft, terms: ""))
             }
         } catch {
             let draft = IngredientDraft(barcode: code)
             editing = IngredientEditTarget(draft: draft,
-                                           note: "Pas de connexion. Recopie les valeurs de l'étiquette.",
+                                           note: "Pas de connexion. Recopier les valeurs de l'étiquette.",
                                            scan: ScanContext(code: code, initial: draft, terms: ""))
         }
     }
