@@ -1,8 +1,7 @@
 # Semainier
 
-Application iPhone de planification de repas : recettes, planning de la semaine, kcal et macros par jour,
-liste de courses et préparation à l'avance (batch cooking). SwiftUI pour iOS 26 (Liquid Glass), données locales
-avec SwiftData, interface entièrement en français.
+Application iPhone de planification de repas et macros pour mon usage personnel. Design SwiftUI pour iOS 26 (Liquid Glass), données locales avec SwiftData. 
+
 
 <p align="center">
   <img src="docs/captures/semaine.png" width="190" alt="Vue Semaine">
@@ -27,6 +26,16 @@ avec SwiftData, interface entièrement en français.
   kcal vérifiées contre les kJ et les macros, rayon et poids d'une pièce devinés.
 - **Sauvegarde JSON** : export et import depuis le menu ⋯ (AirDrop, Fichiers).
 - Mode sombre, Dynamic Type et VoiceOver pris en charge.
+
+## Prévu / en réflexion  
+
+- Streaks de jours dans la cible
+- Template de semaines
+- Scan de ticket de caisse pour avoir rapidement les stocks a disposition ? 
+- Statistiques 
+- Complétion de journée automatique 
+- Filtrage de recettes par type d'aliment 
+- Onglet communautaire, profil, partage de recette avec macros ?
 
 ## Prérequis
 
