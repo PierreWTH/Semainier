@@ -2,7 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Semainier: SwiftUI app for iOS 26 (Liquid Glass) with SwiftData. Everything is in French: UI strings, comments, and many identifiers (`fond`, `texte2`, `depassement`, `Arrondi`, `Police`). Write new code the same way.
+Semainier: SwiftUI app for iOS 26 (Liquid Glass) with SwiftData.
+
+**Language**: code identifiers are in English (types, functions, variables, enum cases, parameters, file and test names, colour tokens, Python scripts). UI strings, code comments, docs (README, DA.md) and script messages stay in French. Exceptions, because they are persisted: the stored property `Ingredient.rayonRaw`, the backup JSON key `rayon`, and the raw values of the preference enums (`AppTab`, `PlanningMode`, `KitchenMode`, `AddMode`: `"courses"`, `"semaine"`, `"plats"`…), which are also the launch-argument values.
 
 ## Commands
 
@@ -15,24 +17,24 @@ Semainier: SwiftUI app for iOS 26 (Liquid Glass) with SwiftData. Everything is i
 ## Pitfalls
 
 - The project uses synchronized folders (objectVersion 77). Any file added under `Semainier/` is compiled automatically, so never edit `project.pbxproj` to add one.
-- `ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO`: the colours are declared by hand in `Semainier/UI/Theme.swift`. Generated symbols would clash with them.
-- `semainier-da/Theme.swift` is the design-direction reference and is not compiled. The app's version is `Semainier/UI/Theme.swift`. Its `Rayon` enum is renamed `Arrondi`, because `Rayon` is the shop-aisle enum in `Nutrition.swift`.
+- `ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO`: the colours of `Semainier/Colors.xcassets` are declared by hand in `Semainier/UI/Theme.swift` (colorset name = Swift name). Generated symbols would clash with them.
+- `semainier-da/Theme.swift` is the design-direction reference and is not compiled; it keeps the original French token names (`fond`, `texte2`, `Arrondi`, `Police`…). The app's version is `Semainier/UI/Theme.swift`, in English (`appBackground`, `textSecondary`, `Radius`, `AppFont`…).
 - `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. Pure types in `Core/` are marked `nonisolated`.
-- The SwiftData schema is versioned (`Model/Schema.swift`: `SchemaV1` + `PlanDeMigration`), so existing stores keep opening. Never change a stored property of the `@Model` classes in place: add a `SchemaV2` and a migration stage. `SchemaTests` checks that a pre-versioning store still opens.
-- Errors go to `Journal` (os `Logger`), never a silent `try?`: use `context.lire(…)`, `context.compter(…)` and `context.enregistrer()`.
+- The SwiftData schema is versioned (`Model/Schema.swift`: `SchemaV1` + `AppMigrationPlan`), so existing stores keep opening. Never change a stored property of the `@Model` classes in place: add a `SchemaV2` and a migration stage. `SchemaTests` checks that a pre-versioning store still opens.
+- Errors go to `Journal` (os `Logger`), never a silent `try?`: use `context.fetchOrLog(…)`, `context.fetchCountOrLog(…)` and `context.saveOrLog()`.
 - The UI tests depend on the identifiers `cell-<column>-<meal>` and `entry-<title>` and on the "Ajouter un plat" label. Keep them.
 - If you add temporary data to `Model/UITestData.swift` for screenshots, always restore the file afterwards.
 - The Week grid is UIKit (`Planning/WeekGrid.swift`: `UICollectionView` + custom layout, SwiftUI content via `UIHostingConfiguration`). Row heights are measured from the cells' SwiftUI content (`measuring: true` variant, no `maxHeight: .infinity`); `WeekView.layoutKey` must change whenever a row height can change, or the grid won't remeasure. `matchedGeometryEffect` can't cross into the grid's cells.
 
 ## Design direction
 
-- Visual reference: `semainier-da/DA.md`, plus colours in `Semainier/Couleurs.xcassets`. When a visual decision changes, update DA.md.
-- Use tokens (`Color.fond`, `.police(...)`, `Arrondi`, `Espace`) and never literal colours.
+- Visual reference: `semainier-da/DA.md`, plus colours in `Semainier/Colors.xcassets`. When a visual decision changes, update DA.md.
+- Use tokens (`Color.appBackground`, `.appFont(...)`, `Radius`, `Spacing`) and never literal colours.
 - UI text, README and script messages never address the user as « tu »: use the infinitive (« Toucher un jour pour l'ouvrir », « Recopier les valeurs ») or an impersonal phrasing (« Le planning attend ses premiers plats »).
 - Restyle system components; never replace them.
 - Macro order: Glucides · Protéines · Lipides.
 - Numbers use `.monospacedDigit()` and fr_FR formatting through `Fmt`.
-- A value is over target above +3 % (`Seuil`, `etatJour`). Bars are capped at 100 %.
+- A value is over target above +3 % (`Threshold`, `Nutrition.dayStatus`). Bars are capped at 100 %.
 - Support Dynamic Type through `@ScaledMetric`.
 - A design change must not change any feature or gesture unless asked.
 

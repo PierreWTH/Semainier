@@ -37,7 +37,7 @@ struct QuantitySheet: View {
                                     .focused($focused)
                                     .font(.system(size: valueSize, weight: .bold, design: .rounded)).monospacedDigit()
                                 Text(ingredient.unit.short)
-                                    .font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+                                    .font(.system(size: unitSize)).foregroundStyle(Color.textSecondary)
                             }
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             // Contour concentrique à la case de la liste : même écart (6 pt) sur les quatre côtés.
@@ -52,7 +52,7 @@ struct QuantitySheet: View {
                         let m = ingredient.macros(qty: qty ?? 0)
                         VStack(alignment: .leading, spacing: 6) {
                             Text("\(Fmt.n0(m.kcal)) kcal · \(MacroLine.text(m, unit: " g"))")
-                                .font(.subheadline).foregroundStyle(Color.texte2)
+                                .font(.subheadline).foregroundStyle(Color.textSecondary)
                             if let note { Text(note) }
                         }
                     }
@@ -68,7 +68,7 @@ struct QuantitySheet: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle(ingredient.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -83,7 +83,7 @@ struct QuantitySheet: View {
             }
         }
         .presentationDetents([.height((byPiece ? 340 : 210) + (original != nil ? 70 : 0))])
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
         .onAppear {
             text = Fmt.input(initial ?? (byPiece ? 1 : 100))
             count = max(1, Int((initial ?? 1).rounded()))

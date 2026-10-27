@@ -13,7 +13,7 @@ final class Ingredient {
     var p: Double = 0
     var c: Double = 0
     var f: Double = 0
-    var rayonRaw: String = Rayon.epicerie.rawValue
+    var rayonRaw: String = Aisle.grocery.rawValue
     var barcode: String?
     /// Poids (ou volume) d'une pièce en g/ml, 0 si inconnu.
     var pieceWeight: Double = 0
@@ -26,14 +26,14 @@ final class Ingredient {
     var planEntries: [PlanEntry]? = []
 
     init(name: String, unit: Unit, kcal: Double, p: Double, c: Double, f: Double,
-         rayon: Rayon, barcode: String? = nil) {
+         aisle: Aisle, barcode: String? = nil) {
         self.name = name
         self.unitRaw = unit.rawValue
         self.kcal = kcal
         self.p = p
         self.c = c
         self.f = f
-        self.rayonRaw = rayon.rawValue
+        self.rayonRaw = aisle.rawValue
         self.barcode = barcode
     }
 
@@ -42,8 +42,8 @@ final class Ingredient {
         set { unitRaw = newValue.rawValue }
     }
 
-    var rayon: Rayon {
-        get { Rayon(rawValue: rayonRaw) ?? .autre }
+    var aisle: Aisle {
+        get { Aisle(rawValue: rayonRaw) ?? .other }
         set { rayonRaw = newValue.rawValue }
     }
 
@@ -72,11 +72,11 @@ final class Ingredient {
 extension Ingredient {
     /// Ingrédients filtrés par `query` et triés par nom, en une section par rayon, dans l'ordre du magasin
     /// (rayons vides omis).
-    static func parRayon(_ list: [Ingredient], query: String) -> [(rayon: Rayon, items: [Ingredient])] {
-        let found = list.filtres(query, nom: \.name)
-        return Rayon.allCases.compactMap { rayon in
-            let items = found.filter { $0.rayon == rayon }
-            return items.isEmpty ? nil : (rayon, items)
+    static func byAisle(_ list: [Ingredient], query: String) -> [(aisle: Aisle, items: [Ingredient])] {
+        let found = list.filtered(query, name: \.name)
+        return Aisle.allCases.compactMap { aisle in
+            let items = found.filter { $0.aisle == aisle }
+            return items.isEmpty ? nil : (aisle, items)
         }
     }
 }
@@ -192,22 +192,22 @@ final class PlanEntry {
 
     /// Ce qu'est le plat : une recette, un ingrédient seul ou un repas libre (dans cet ordre de priorité).
     enum Kind {
-        case recette(Recipe)
+        case recipe(Recipe)
         case ingredient(Ingredient, qty: Double)
-        case libre(FreeMeal)
+        case freeMeal(FreeMeal)
         /// Recette ou ingrédient supprimé : l'entrée ne compte plus.
-        case vide
+        case empty
     }
 
     var kind: Kind {
-        if let recipe { return .recette(recipe) }
+        if let recipe { return .recipe(recipe) }
         if let ingredient { return .ingredient(ingredient, qty: qty) }
-        if let free { return .libre(free) }
-        return .vide
+        if let free { return .freeMeal(free) }
+        return .empty
     }
 
-    var repas: Repas {
-        get { Repas(slot: slot) }
+    var meal: Meal {
+        get { Meal(slot: slot) }
         set { slot = newValue.rawValue }
     }
 
@@ -249,33 +249,33 @@ final class PlanEntry {
 
     var totals: Macros {
         switch kind {
-        case .recette(let r): (r.items ?? []).map { $0.ingredient?.macros(qty: qty(for: $0)) ?? .zero }.sum * x
+        case .recipe(let r): (r.items ?? []).map { $0.ingredient?.macros(qty: qty(for: $0)) ?? .zero }.sum * x
         case .ingredient(let g, let q): g.macros(qty: q) * x
-        case .libre(let m): Macros(kcal: m.kcal, p: m.p, c: m.c, f: m.f)
-        case .vide: .zero
+        case .freeMeal(let m): Macros(kcal: m.kcal, p: m.p, c: m.c, f: m.f)
+        case .empty: .zero
         }
     }
 
     /// Quantité par ingrédient pour cette entrée (liste de courses).
     var shoppingLines: [(ingredient: Ingredient, qty: Double)] {
         switch kind {
-        case .recette(let r): (r.items ?? []).compactMap { it in it.ingredient.map { ($0, qty(for: it) * x) } }
+        case .recipe(let r): (r.items ?? []).compactMap { it in it.ingredient.map { ($0, qty(for: it) * x) } }
         case .ingredient(let g, let q): [(g, q * x)]
-        case .libre, .vide: []
+        case .freeMeal, .empty: []
         }
     }
 
     /// Duplique l'entrée sur un autre jour (et éventuellement un autre repas).
-    func copy(to date: DayKey, repas: Repas? = nil, order: Int? = nil) -> PlanEntry? {
-        let slot = repas?.rawValue ?? self.slot, order = order ?? self.order
+    func copy(to date: DayKey, meal: Meal? = nil, order: Int? = nil) -> PlanEntry? {
+        let slot = meal?.rawValue ?? self.slot, order = order ?? self.order
         switch kind {
-        case .recette(let r):
+        case .recipe(let r):
             let e = PlanEntry(date: date, slot: slot, recipe: r, x: x, order: order)
             e.overrides = overrides
             return e
         case .ingredient(let g, let q): return PlanEntry(date: date, slot: slot, ingredient: g, qty: q, x: x, order: order)
-        case .libre(let m): return PlanEntry(date: date, slot: slot, free: m, order: order)
-        case .vide: return nil
+        case .freeMeal(let m): return PlanEntry(date: date, slot: slot, free: m, order: order)
+        case .empty: return nil
         }
     }
 }
@@ -332,7 +332,7 @@ extension PlanEntry {
     /// Plats des 7 prochains jours (courses, « À préparer »), avec un jour de marge de chaque côté :
     /// la requête reste juste même si l'écran n'a pas été recréé depuis minuit. Les vues filtrent ensuite
     /// sur les jours choisis.
-    static var prochainsJours: Predicate<PlanEntry> {
+    static var upcomingDays: Predicate<PlanEntry> {
         let start = Days.adding(-1, to: Days.today), end = Days.adding(8, to: Days.today)
         return #Predicate { $0.date >= start && $0.date < end }
     }

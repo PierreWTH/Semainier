@@ -8,13 +8,13 @@ import UIKit
 final class Base {
     private(set) var container: ModelContainer?
     private(set) var settings: AppSettings?
-    private(set) var erreur: String?
+    private(set) var errorMessage: String?
     /// Emplacement du fichier de la base (nil en mémoire).
     private var url: URL?
 
-    init() { ouvrir() }
+    init() { openStore() }
 
-    func ouvrir() {
+    func openStore() {
         let schema = Schema(versionedSchema: SchemaV1.self)
         // Stockage local uniquement (compte gratuit). Pour la sync iCloud : cloudKitDatabase: .automatic.
         var config = ModelConfiguration(schema: schema, cloudKitDatabase: .none)
@@ -25,10 +25,10 @@ final class Base {
         url = config.isStoredInMemoryOnly ? nil : config.url
         let container: ModelContainer
         do {
-            container = try ModelContainer(for: schema, migrationPlan: PlanDeMigration.self, configurations: config)
+            container = try ModelContainer(for: schema, migrationPlan: AppMigrationPlan.self, configurations: config)
         } catch {
-            Journal.donnees.fault("Ouverture de la base impossible : \(error.localizedDescription, privacy: .public)")
-            erreur = error.localizedDescription
+            Journal.store.fault("Ouverture de la base impossible : \(error.localizedDescription, privacy: .public)")
+            errorMessage = error.localizedDescription
             return
         }
         let context = container.mainContext
@@ -39,30 +39,30 @@ final class Base {
         if UITestData.enabled { UITestData.insert(into: context) }
         if PerfData.enabled { PerfData.insert(into: context) }
         #endif
-        context.enregistrer()
+        context.saveOrLog()
         self.container = container
         self.settings = settings
-        erreur = nil
+        errorMessage = nil
     }
 
     /// Met l'ancienne base de côté (renommée, avec ses fichiers annexes) et en ouvre une vide.
     /// On peut ensuite importer une sauvegarde depuis le menu ⋯.
-    func repartirDeZero() {
+    func startFresh() {
         if let url {
             let fm = FileManager.default
-            let suffixe = ".illisible-" + Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
+            let suffix = ".illisible-" + Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
                 .replacingOccurrences(of: ":", with: "")
             for ext in ["", "-wal", "-shm"] {
                 let f = URL(fileURLWithPath: url.path + ext)
                 guard fm.fileExists(atPath: f.path) else { continue }
                 do {
-                    try fm.moveItem(at: f, to: URL(fileURLWithPath: f.path + suffixe))
+                    try fm.moveItem(at: f, to: URL(fileURLWithPath: f.path + suffix))
                 } catch {
-                    Journal.donnees.error("Impossible de mettre de côté \(f.lastPathComponent, privacy: .public) : \(error.localizedDescription, privacy: .public)")
+                    Journal.store.error("Impossible de mettre de côté \(f.lastPathComponent, privacy: .public) : \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
-        ouvrir()
+        openStore()
     }
 }
 
@@ -89,31 +89,31 @@ struct SemainierApp: App {
                     .tint(Color.accentColor)
                     .modelContainer(container)
             } else {
-                ErreurBaseView(detail: base.erreur ?? "", reessayer: base.ouvrir, repartir: base.repartirDeZero)
+                StoreErrorView(detail: base.errorMessage ?? "", retry: base.openStore, startFresh: base.startFresh)
             }
         }
         // L'enregistrement automatique peut ne pas avoir eu lieu quand iOS suspend l'appli.
         .onChange(of: scenePhase) {
-            if scenePhase == .background { base.container?.mainContext.enregistrer() }
+            if scenePhase == .background { base.container?.mainContext.saveOrLog() }
         }
     }
 }
 
 struct RootView: View {
-    @AppStorage(Prefs.onglet) private var tab = Onglet.planning
-    @AppStorage(Prefs.modeCuisine) private var cuisineMode = ModeCuisine.plats
+    @AppStorage(Prefs.tab) private var tab = AppTab.planning
+    @AppStorage(Prefs.kitchenMode) private var kitchenMode = KitchenMode.dishes
     /// Lu ici : un nouveau jour recrée les onglets, et avec eux leurs requêtes sur les prochains jours.
     @State private var today = Days.today
 
     var body: some View {
         TabView(selection: $tab) {
-            Tab("Planning", systemImage: "calendar", value: Onglet.planning) { PlanningView() }
-            Tab("Courses", systemImage: "basket", value: Onglet.courses) { ShoppingView() }
-            Tab("Cuisine", systemImage: "frying.pan", value: Onglet.cuisine) { CuisineView() }
+            Tab("Planning", systemImage: "calendar", value: AppTab.planning) { PlanningView() }
+            Tab("Courses", systemImage: "basket", value: AppTab.shopping) { ShoppingView() }
+            Tab("Cuisine", systemImage: "frying.pan", value: AppTab.kitchen) { KitchenView() }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .environment(\.aujourdhui, today)
-        .modifier(SuiviDuJour(today: $today))
+        .environment(\.currentDay, today)
+        .modifier(DayTracking(today: $today))
         .modifier(ToastOverlay())
         .onAppear(perform: migrateTab)
     }
@@ -121,9 +121,9 @@ struct RootView: View {
     /// Anciens onglets Recettes / Ingrédients (préférence enregistrée, ou écrite par `shots.sh`) :
     /// ouvre l'onglet Cuisine du bon côté. Lus en texte brut : ce ne sont plus des valeurs d'`Onglet`.
     private func migrateTab() {
-        switch UserDefaults.standard.string(forKey: Prefs.onglet) {
-        case "recettes": cuisineMode = .plats; tab = .cuisine
-        case "ingredients": cuisineMode = .ingredients; tab = .cuisine
+        switch UserDefaults.standard.string(forKey: Prefs.tab) {
+        case "recettes": kitchenMode = .dishes; tab = .kitchen
+        case "ingredients": kitchenMode = .ingredients; tab = .kitchen
         default: break
         }
     }

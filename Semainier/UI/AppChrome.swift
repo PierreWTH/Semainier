@@ -70,13 +70,13 @@ struct AppChrome<Extra: View>: ViewModifier {
 
     /// Total du jour, en `ok` / `depassement` selon la cible, en accent sinon.
     private func bubble(_ m: Macros) -> some View {
-        let color = Seuil.couleurJour(m.kcal, objectif: settings.targetKcal, sinon: .accentColor)
+        let color = Threshold.dayColor(m.kcal, target: settings.targetKcal, otherwise: .accentColor)
         return VStack(alignment: .trailing, spacing: 0) {
             Text("\(Fmt.n0(m.kcal)) kcal")
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(color)
                 .contentTransition(.numericText(value: m.kcal))
-            MacroLine(m: m, unit: " g").font(.system(size: 11)).foregroundStyle(Color.texte2)
+            MacroLine(m: m, unit: " g").font(.system(size: 11)).foregroundStyle(Color.textSecondary)
         }
         .monospacedDigit()
         .padding(.horizontal, 6)
@@ -142,16 +142,16 @@ struct TargetsSheet: View {
                                 .contentTransition(.numericText(value: kcal))
                                 .animation(.snappy, value: kcal)
                         }
-                        NumberField(label: "Glucides (g)", text: $c, color: Color.glucTexte)
-                        NumberField(label: "Protéines (g)", text: $p, color: Color.protTexte)
-                        NumberField(label: "Lipides (g)", text: $f, color: Color.lipTexte)
+                        NumberField(label: "Glucides (g)", text: $c, color: Color.carbsText)
+                        NumberField(label: "Protéines (g)", text: $p, color: Color.proteinText)
+                        NumberField(label: "Lipides (g)", text: $f, color: Color.fatText)
                     } footer: {
                         Text(hint)
                     }
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle("Mes objectifs")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -167,7 +167,7 @@ struct TargetsSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
         .onAppear {
             p = Fmt.input(settings.targetP)
             c = Fmt.input(settings.targetC)

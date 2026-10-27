@@ -10,7 +10,7 @@ struct RecipePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var recipes: [Recipe]
     @Query private var ingredients: [Ingredient]
-    @AppStorage(Prefs.modeAjout) private var mode = ModeAjout.plats
+    @AppStorage(Prefs.addMode) private var mode = AddMode.dishes
     @State private var query = ""
     /// Recherche active dès l'ouverture : le clavier monte avec la fenêtre, on tape le plat directement.
     @State private var searching = true
@@ -26,7 +26,7 @@ struct RecipePickerSheet: View {
     @State private var freeMeal: FreeMealPrompt?
     /// Feuille suivante (nombre de pièces, quantité), ouverte quand l'éditeur de recette ou d'ingrédient a fini de
     /// se fermer : deux feuilles ne s'ouvrent pas en même temps.
-    @State private var apresFermeture: (() -> Void)?
+    @State private var afterDismiss: (() -> Void)?
 
     struct FreeMealPrompt: Identifiable {
         let id = UUID()
@@ -57,8 +57,8 @@ struct RecipePickerSheet: View {
                 Group {
                     Section {
                         Picker("Type", selection: $mode.animation(.snappy)) {
-                            Text("Plats").tag(ModeAjout.plats)
-                            Text("Ingrédients").tag(ModeAjout.ingredients)
+                            Text("Plats").tag(AddMode.dishes)
+                            Text("Ingrédients").tag(AddMode.ingredients)
                         }
                         .pickerStyle(.segmented)
                         .listRowBackground(Color.clear)
@@ -78,13 +78,13 @@ struct RecipePickerSheet: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .searchable(text: $query, isPresented: $searching,
                         prompt: mode == .ingredients ? "Rechercher un ingrédient" : "Rechercher un plat")
             // Recherche active : garde le titre et « Fermer » visibles.
             .searchPresentationToolbarBehavior(.avoidHidingContent)
             .navigationTitle("Ajouter")
-            .navigationSubtitle("\(Days.longLabel(ref.date)) · \(ref.repas.nom)")
+            .navigationSubtitle("\(Days.longLabel(ref.date)) · \(ref.meal.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Fermer", role: .close) { dismiss() } }
@@ -112,23 +112,23 @@ struct RecipePickerSheet: View {
             }
             .animation(.snappy, value: picks.count)
             .sensoryFeedback(.selection, trigger: picks.count)
-            .sheet(isPresented: $creatingRecipe, onDismiss: enchainer) {
+            .sheet(isPresented: $creatingRecipe, onDismiss: runAfterDismiss) {
                 RecipeEditor(recipe: nil) { r in
                     let multi = selecting
-                    apresFermeture = { choose(r, multi: multi) }
+                    afterDismiss = { choose(r, multi: multi) }
                 }
             }
-            .sheet(item: $creatingIngredient, onDismiss: enchainer) { t in
+            .sheet(item: $creatingIngredient, onDismiss: runAfterDismiss) { t in
                 IngredientEditor(target: t) { i in
                     let multi = selecting
-                    apresFermeture = { askQuantity(i, multi: multi) }
+                    afterDismiss = { askQuantity(i, multi: multi) }
                 }
             }
             // Le scan ne rend l'ingrédient qu'une fois sa caméra et sa fiche fermées.
             .barcodeScanFlow(isPresented: $scanning, pickExisting: true) { askQuantity($0, multi: selecting) }
             .sheet(item: $freeMeal) { prompt in
                 FreeMealSheet(suggestedName: prompt.name) { meal in
-                    PlanActions.add(meal, date: ref.date, slot: ref.repas, in: context)
+                    PlanActions.add(meal, date: ref.date, slot: ref.meal, in: context)
                     // Une sélection en cours reste ouverte ; sinon, comme pour un plat, on referme.
                     if !selecting { dismiss() }
                 }
@@ -145,7 +145,7 @@ struct RecipePickerSheet: View {
                 }
             }
         }
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
     }
 
     /// « Ajouter 3 ingrédients », « Ajouter 2 plats », ou « Ajouter 4 éléments » si la sélection mélange les deux.
@@ -161,7 +161,7 @@ struct RecipePickerSheet: View {
             Label {
                 Text(title)
             } icon: {
-                Image(systemName: FreeMealStyle.icon).foregroundStyle(Color.libre)
+                Image(systemName: FreeMealStyle.icon).foregroundStyle(Color.freeMeal)
             }
         }
     }
@@ -169,14 +169,14 @@ struct RecipePickerSheet: View {
     @ViewBuilder
     private func check(_ on: Bool) -> some View {
         if selecting {
-            CercleCoche(on: on)
+            CheckCircle(on: on)
                 .transition(.scale.combined(with: .opacity))
         }
     }
 
     @ViewBuilder
     private var recipeRows: some View {
-        let list = recipes.filtres(query, nom: \.name)
+        let list = recipes.filtered(query, name: \.name)
         Section {
             ForEach(list) { r in
                 let on = isPicked(r.persistentModelID)
@@ -214,7 +214,7 @@ struct RecipePickerSheet: View {
 
     @ViewBuilder
     private var ingredientRows: some View {
-        ForEach(Ingredient.parRayon(ingredients, query: query), id: \.rayon) { rayon, items in
+        ForEach(Ingredient.byAisle(ingredients, query: query), id: \.aisle) { aisle, items in
             Section {
                 ForEach(items) { i in
                     let qty = pickedQty(i)
@@ -234,7 +234,7 @@ struct RecipePickerSheet: View {
                     .accessibilityAction(named: "Sélectionner plusieurs") { if qty == nil { askQuantity(i, multi: true) } }
                 }
             } header: {
-                Text(rayon.rawValue).font(.headline).foregroundStyle(.primary).textCase(nil)
+                Text(aisle.rawValue).font(.headline).foregroundStyle(.primary).textCase(nil)
             }
         }
     }
@@ -256,9 +256,9 @@ struct RecipePickerSheet: View {
         if isPicked(r.persistentModelID) { picks.removeAll { $0.id == r.persistentModelID } } else { choose(r, multi: true) }
     }
 
-    private func enchainer() {
-        let action = apresFermeture
-        apresFermeture = nil
+    private func runAfterDismiss() {
+        let action = afterDismiss
+        afterDismiss = nil
         action?()
     }
 
@@ -285,8 +285,8 @@ struct RecipePickerSheet: View {
     private func add(_ items: [Pick]) {
         for p in items {
             switch p {
-            case .recipe(let r, let x): PlanActions.add(r, x: x, date: ref.date, slot: ref.repas, in: context)
-            case .ingredient(let i, let q): PlanActions.add(i, qty: q, date: ref.date, slot: ref.repas, in: context)
+            case .recipe(let r, let x): PlanActions.add(r, x: x, date: ref.date, slot: ref.meal, in: context)
+            case .ingredient(let i, let q): PlanActions.add(i, qty: q, date: ref.date, slot: ref.meal, in: context)
             }
         }
         dismiss()

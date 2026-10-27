@@ -15,8 +15,8 @@ struct IngredientPicker: View {
         NavigationStack {
             List {
                 Group {
-                    ForEach(Ingredient.parRayon(ingredients, query: query), id: \.rayon) { rayon, items in
-                        Section(rayon.rawValue) {
+                    ForEach(Ingredient.byAisle(ingredients, query: query), id: \.aisle) { aisle, items in
+                        Section(aisle.rawValue) {
                             ForEach(items) { i in
                                 Button { pick(i) } label: { IngredientRow(ingredient: i) }
                                     .buttonStyle(.plain)
@@ -26,7 +26,7 @@ struct IngredientPicker: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Rechercher un ingrédient")
             .navigationTitle("Choisir un ingrédient")
             .navigationBarTitleDisplayMode(.inline)
@@ -42,7 +42,7 @@ struct IngredientPicker: View {
             }
             .barcodeScanFlow(isPresented: $scanning, pickExisting: true) { pick($0) }
         }
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
     }
 
     private func pick(_ i: Ingredient) {

@@ -102,8 +102,8 @@ struct RecipeEditor: View {
                     Section("Total pour 1 \(byPiece ? "pièce" : "portion")") {
                         HStack {
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text(Fmt.n0(totals.kcal)).police(.kcalRecette)
-                                Text("kcal").foregroundStyle(Color.texte2)
+                                Text(Fmt.n0(totals.kcal)).appFont(.recipeKcal)
+                                Text("kcal").foregroundStyle(Color.textSecondary)
                             }
                             .monospacedDigit()
                             Spacer()
@@ -112,7 +112,7 @@ struct RecipeEditor: View {
                     }
 
                     if let error {
-                        Text(error).foregroundStyle(Color.depassement).font(.subheadline.weight(.semibold))
+                        Text(error).foregroundStyle(Color.overTarget).font(.subheadline.weight(.semibold))
                     }
 
                     if let recipe {
@@ -125,7 +125,7 @@ struct RecipeEditor: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle(recipe == nil ? "Nouvelle recette" : "Modifier la recette")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -156,7 +156,7 @@ struct RecipeEditor: View {
                 if let recipe, recipe.uses > 0 { Text("Elle sera retirée \(recipe.uses)× du planning.") }
             }
         }
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
         .interactiveDismissDisabled(isDirty)
         .onAppear(perform: load)
     }
@@ -239,7 +239,7 @@ struct QuantityField: View {
                 .focused(focus, equals: id)
                 .accessibilityLabel("Quantité")
             if let unit {
-                Text(unit == .pc ? "pc" : unit.short).foregroundStyle(Color.texte2)
+                Text(unit == .pc ? "pc" : unit.short).foregroundStyle(Color.textSecondary)
             }
         }
         .frame(width: 92, height: 38)

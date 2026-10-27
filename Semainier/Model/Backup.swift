@@ -12,9 +12,13 @@ nonisolated struct Backup: Codable {
         var name: String
         var unit: String
         var kcal, p, c, f: Double
-        var rayon: String
+        var aisle: String
         var barcode: String?
         var pieceWeight: Double?
+        // Clé « rayon » gardée : les sauvegardes existantes doivent rester lisibles.
+        private enum CodingKeys: String, CodingKey {
+            case id, name, unit, kcal, p, c, f, aisle = "rayon", barcode, pieceWeight
+        }
     }
     struct Item: Codable { var ing: String; var qty: Double }
     struct Rec: Codable {
@@ -87,12 +91,12 @@ nonisolated struct Backup: Codable {
 
     @MainActor static func make(from context: ModelContext) -> Backup {
         let s = PlanActions.settings(in: context)
-        let ings = context.lire(FetchDescriptor<Ingredient>())
-        let recs = context.lire(FetchDescriptor<Recipe>())
-        let entries = context.lire(FetchDescriptor<PlanEntry>())
+        let ings = context.fetchOrLog(FetchDescriptor<Ingredient>())
+        let recs = context.fetchOrLog(FetchDescriptor<Recipe>())
+        let entries = context.fetchOrLog(FetchDescriptor<PlanEntry>())
         return Backup(
             targets: Targets(kcal: s.targetKcal, p: s.targetP, c: s.targetC, f: s.targetF),
-            ingredients: ings.map { Ing(id: $0.uid, name: $0.name, unit: $0.unitRaw, kcal: $0.kcal, p: $0.p, c: $0.c, f: $0.f, rayon: $0.rayonRaw, barcode: $0.barcode,
+            ingredients: ings.map { Ing(id: $0.uid, name: $0.name, unit: $0.unitRaw, kcal: $0.kcal, p: $0.p, c: $0.c, f: $0.f, aisle: $0.rayonRaw, barcode: $0.barcode,
                                      pieceWeight: $0.pieceWeight > 0 ? $0.pieceWeight : nil) },
             recipes: recs.map { r in
                 Rec(id: r.uid, name: r.name, items: r.sortedItems.compactMap { it in
@@ -101,15 +105,15 @@ nonisolated struct Backup: Codable {
             },
             plan: entries.compactMap { e in
                 switch e.kind {
-                case .recette(let r):
+                case .recipe(let r):
                     Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, recipe: r.uid, x: e.x,
                           overrides: e.overrides.isEmpty ? nil : e.overrides)
                 case .ingredient(let i, let q):
                     Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, ing: i.uid, qty: q, x: e.x)
-                case .libre(let m):
+                case .freeMeal(let m):
                     Entry(id: e.uid, date: Days.iso(e.date), slot: e.slot, x: 1, free: m.name,
                           kcal: m.kcal, p: m.p, c: m.c, f: m.f)
-                case .vide:
+                case .empty:
                     nil
                 }
             },
@@ -129,7 +133,7 @@ nonisolated struct Backup: Codable {
         var ings: [String: Ingredient] = [:]
         for i in ingredients {
             let ing = Ingredient(name: i.name, unit: Unit(rawValue: i.unit) ?? .g, kcal: i.kcal, p: i.p, c: i.c, f: i.f,
-                                 rayon: Rayon(rawValue: i.rayon) ?? .autre, barcode: i.barcode)
+                                 aisle: Aisle(rawValue: i.aisle) ?? .other, barcode: i.barcode)
             ing.uid = i.id
             ing.pieceWeight = i.pieceWeight ?? 0
             context.insert(ing)

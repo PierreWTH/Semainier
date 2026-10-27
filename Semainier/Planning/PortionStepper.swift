@@ -20,8 +20,8 @@ struct PortionStepper: View {
         .buttonRepeatBehavior(.enabled)
         .frame(height: 34)
         .padding(.horizontal, 8)
-        .background(Color.fond, in: .capsule)
-        .overlay(Capsule().strokeBorder(Color.filet))
+        .background(Color.appBackground, in: .capsule)
+        .overlay(Capsule().strokeBorder(Color.hairline))
         .sensoryFeedback(.increase, trigger: x)
         .animation(.snappy, value: x)
     }

@@ -9,7 +9,7 @@ struct IngredientDraft {
     var p = ""
     var c = ""
     var f = ""
-    var rayon: Rayon = .epicerie
+    var aisle: Aisle = .grocery
     var barcode: String?
     /// Kcal corrigées au scan (fiche Open Food Facts incohérente).
     var kcalNote: String?
@@ -65,7 +65,7 @@ struct IngredientDraft {
         p = Fmt.input(i.p)
         c = Fmt.input(i.c)
         f = Fmt.input(i.f)
-        rayon = i.rayon
+        aisle = i.aisle
         barcode = i.barcode
         pieceWeight = Fmt.input(i.pieceWeight)
     }
@@ -77,7 +77,7 @@ struct IngredientDraft {
         p = s.p.map(Fmt.input) ?? ""
         c = s.c.map(Fmt.input) ?? ""
         f = s.f.map(Fmt.input) ?? ""
-        rayon = s.rayon
+        aisle = s.aisle
         self.barcode = barcode
         kcalNote = s.kcalNote
         pieceWeight = s.pieceWeight.map(Fmt.input) ?? ""
@@ -158,10 +158,10 @@ struct IngredientEditor: View {
                                         placeholder: "ex. 300")
                         }
                         NumberField(label: "Kcal", text: manual(\.kcal), placeholder: kcalPlaceholder,
-                                    valueColor: kcalLooksOff ? .attention : nil)
-                        NumberField(label: "Glucides (g)", text: manual(\.c), color: Color.glucTexte)
-                        NumberField(label: "Protéines (g)", text: manual(\.p), color: Color.protTexte)
-                        NumberField(label: "Lipides (g)", text: manual(\.f), color: Color.lipTexte)
+                                    valueColor: kcalLooksOff ? .warning : nil)
+                        NumberField(label: "Glucides (g)", text: manual(\.c), color: Color.carbsText)
+                        NumberField(label: "Protéines (g)", text: manual(\.p), color: Color.proteinText)
+                        NumberField(label: "Lipides (g)", text: manual(\.f), color: Color.fatText)
                     } header: {
                         Text("Valeurs nutritionnelles")
                     } footer: {
@@ -169,13 +169,13 @@ struct IngredientEditor: View {
                             if d.unit == .pc, let w = Fmt.parse(d.pieceWeight), w > 0 {
                                 Text("Valeurs pour 1 pièce de \(Fmt.n1(w)) g, calculées à partir des valeurs pour 100 g.")
                             }
-                            if let note = d.kcalNote { Text(note).foregroundStyle(Color.attention) }
-                            Text(hint).foregroundStyle(kcalLooksOff ? Color.attention : Color.texte2)
+                            if let note = d.kcalNote { Text(note).foregroundStyle(Color.warning) }
+                            Text(hint).foregroundStyle(kcalLooksOff ? Color.warning : Color.textSecondary)
                         }
                     }
                     Section {
-                        Picker("Rayon", selection: $d.rayon) {
-                            ForEach(Rayon.allCases) { Text($0.rawValue).tag($0) }
+                        Picker("Rayon", selection: $d.aisle) {
+                            ForEach(Aisle.allCases) { Text($0.rawValue).tag($0) }
                         }
                     } footer: {
                         Text("Sert à trier la liste de courses.")
@@ -186,7 +186,7 @@ struct IngredientEditor: View {
                         }
                     }
                     if let error {
-                        Text(error).foregroundStyle(Color.depassement).font(.subheadline.weight(.semibold))
+                        Text(error).foregroundStyle(Color.overTarget).font(.subheadline.weight(.semibold))
                     }
                     if let ing = target.ingredient {
                         Section {
@@ -199,7 +199,7 @@ struct IngredientEditor: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle(target.ingredient == nil ? "Nouvel ingrédient" : "Modifier l'ingrédient")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -228,7 +228,7 @@ struct IngredientEditor: View {
                 }
             }
         }
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
     }
 
     @ViewBuilder
@@ -294,8 +294,8 @@ struct IngredientEditor: View {
     }
 
     private var kcalPlaceholder: String {
-        let est = d.macroKcal
-        return est > 0 ? Fmt.n0(est) : "0"
+        let estimate = d.macroKcal
+        return estimate > 0 ? Fmt.n0(estimate) : "0"
     }
 
     /// Champ de valeur saisi à la main (oublie la base pour 100 g gardée pour les conversions).
@@ -309,12 +309,12 @@ struct IngredientEditor: View {
     }
 
     private var hint: String {
-        let est = d.macroKcal
-        if let k = Fmt.parse(d.kcal), Nutrition.kcalLooksOff(kcal: k, macroKcal: est) {
-            return "⚠︎ \(Fmt.n0(k)) kcal ne colle pas avec les macros (environ \(Fmt.n0(est)) kcal). Vérifier l'étiquette, ou laisser « Kcal » vide pour utiliser le calcul."
+        let estimate = d.macroKcal
+        if let k = Fmt.parse(d.kcal), Nutrition.kcalLooksOff(kcal: k, macroKcal: estimate) {
+            return "⚠︎ \(Fmt.n0(k)) kcal ne colle pas avec les macros (environ \(Fmt.n0(estimate)) kcal). Vérifier l'étiquette, ou laisser « Kcal » vide pour utiliser le calcul."
         }
-        if est > 0 {
-            return "D'après les macros : environ \(Fmt.n0(est)) kcal. Laisser « Kcal » vide pour utiliser ce calcul."
+        if estimate > 0 {
+            return "D'après les macros : environ \(Fmt.n0(estimate)) kcal. Laisser « Kcal » vide pour utiliser ce calcul."
         }
         return "Recopier les valeurs de l'étiquette ou d'une table nutritionnelle (Ciqual par exemple), \(d.unit.per)."
     }
@@ -338,11 +338,11 @@ struct IngredientEditor: View {
             ing.p = m.p
             ing.c = m.c
             ing.f = m.f
-            ing.rayon = d.rayon
+            ing.aisle = d.aisle
             ing.barcode = d.barcode
         } else {
             ing = Ingredient(name: name, unit: d.unit, kcal: d.resolvedKcal, p: m.p, c: m.c, f: m.f,
-                             rayon: d.rayon, barcode: d.barcode)
+                             aisle: d.aisle, barcode: d.barcode)
             context.insert(ing)
         }
         ing.pieceWeight = Fmt.parse(d.pieceWeight) ?? 0

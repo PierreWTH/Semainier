@@ -18,7 +18,7 @@ struct SchemaTests {
             let schema = Schema([Ingredient.self, Recipe.self, RecipeItem.self, PlanEntry.self, AppSettings.self])
             let container = try ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: url))
             let context = ModelContext(container)
-            let skyr = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, rayon: .cremerieOeufs)
+            let skyr = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, aisle: .dairyEggs)
             context.insert(skyr)
             let r = Recipe(name: "Bol skyr")
             context.insert(r)
@@ -34,13 +34,13 @@ struct SchemaTests {
 
         // Réouverture comme le fait maintenant `Base.ouvrir`.
         let schema = Schema(versionedSchema: SchemaV1.self)
-        let container = try ModelContainer(for: schema, migrationPlan: PlanDeMigration.self,
+        let container = try ModelContainer(for: schema, migrationPlan: AppMigrationPlan.self,
                                            configurations: ModelConfiguration(schema: schema, url: url))
         let context = ModelContext(container)
         let entries = try context.fetch(FetchDescriptor<PlanEntry>())
         #expect(entries.count == 1)
         let e = try #require(entries.first)
-        #expect(e.recipe?.name == "Bol skyr" && e.x == 1.5 && e.repas == .collation)
+        #expect(e.recipe?.name == "Bol skyr" && e.x == 1.5 && e.meal == .snack)
         #expect(e.recipe?.items?.first?.ingredient?.name == "Skyr")
         #expect(e.overrides.values.first == 250)
         #expect(try context.fetchCount(FetchDescriptor<AppSettings>()) == 1)

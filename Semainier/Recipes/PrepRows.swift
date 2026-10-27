@@ -8,7 +8,7 @@ struct PrepRows: View {
     var query: String
     var edit: (RecipeEditTarget) -> Void
     @Environment(AppSettings.self) private var settings
-    @Query(filter: PlanEntry.prochainsJours) private var entries: [PlanEntry]
+    @Query(filter: PlanEntry.upcomingDays) private var entries: [PlanEntry]
     /// « portions » à côté du nombre.
     @ScaledMetric(relativeTo: .subheadline) private var unitSize: CGFloat = 14
     /// Chevron comme celui d'un plat de la vue Jour.
@@ -20,9 +20,9 @@ struct PrepRows: View {
 
     var body: some View {
         let days = chosenDays
-        let list = Preparation.aPreparer(entries, days: days, query: query)
+        let list = Preparation.toPrepare(entries, days: days, query: query)
         // Plats prévus mais non marqués : la liste vide rappelle l'interrupteur.
-        let others = list.isEmpty ? Preparation.plats(entries, days: days, batch: false) : []
+        let others = list.isEmpty ? Preparation.dishes(entries, days: days, batch: false) : []
         if list.isEmpty {
             ContentUnavailableView("Rien à préparer", systemImage: "frying.pan",
                                    description: Text(!query.isEmpty ? "Aucun plat ne correspond."
@@ -65,8 +65,8 @@ struct PrepRows: View {
                         .padding(EdgeInsets(top: 9, leading: 16, bottom: 9, trailing: 16))
                         // Filet dans le fond de la ligne, qui commence exactement où finit l'en-tête (le contenu,
                         // centré dans la ligne, le plaçait quelques points plus bas).
-                        .listRowBackground(Color.fondDeplie.overlay(alignment: .top) {
-                            if i == 0 { Color.filetCarte.frame(height: 1) }
+                        .listRowBackground(Color.expandedBackground.overlay(alignment: .top) {
+                            if i == 0 { Color.cardHairline.frame(height: 1) }
                         })
                         .listRowInsets(EdgeInsets())
                         // Entre deux ingrédients : séparateur décalé de 16 à gauche.
@@ -74,7 +74,7 @@ struct PrepRows: View {
                 }
             }
         }
-        .listRowSeparatorTint(Color.filetCarte)
+        .listRowSeparatorTint(Color.cardHairline)
         .listSectionSpacing(10)
     }
 
@@ -87,19 +87,19 @@ struct PrepRows: View {
                     Text(p.recipe.name).font(.headline).multilineTextAlignment(.leading)
                     Image(systemName: "chevron.down")
                         .font(.system(size: chevronSize, weight: .bold))
-                        .foregroundStyle(Color.texte3)
+                        .foregroundStyle(Color.textTertiary)
                         .rotationEffect(.degrees(open ? 180 : 0))
                         .accessibilityHidden(true)
                 }
                 Spacer(minLength: 8)
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(byPiece ? Fmt.n0(p.total) : Fmt.n1(p.total)).police(.kcalRecette)
-                    Text(unit).font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+                    Text(byPiece ? Fmt.n0(p.total) : Fmt.n1(p.total)).appFont(.recipeKcal)
+                    Text(unit).font(.system(size: unitSize)).foregroundStyle(Color.textSecondary)
                 }
                 .monospacedDigit()
                 .fixedSize()
             }
-            Text(p.daysText(chosenCount: chosenDays.count)).font(.footnote).foregroundStyle(Color.texte2)
+            Text(p.daysText(chosenCount: chosenDays.count)).font(.footnote).foregroundStyle(Color.textSecondary)
         }
     }
 
@@ -107,12 +107,12 @@ struct PrepRows: View {
     private func line(_ g: Ingredient, _ qty: Double) -> some View {
         let q = QuantityParts(Fmt.cook(qty, unit: g.unit))
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(g.name).font(.callout).foregroundStyle(Color.texte)
+            Text(g.name).font(.callout).foregroundStyle(Color.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(q.number).police(.quantite).foregroundStyle(Color.texte)
+                Text(q.number).appFont(.quantity).foregroundStyle(Color.textPrimary)
                 if let unit = q.unit {
-                    Text(unit).font(.callout).foregroundStyle(Color.texte2)
+                    Text(unit).font(.callout).foregroundStyle(Color.textSecondary)
                 }
             }
             .monospacedDigit()

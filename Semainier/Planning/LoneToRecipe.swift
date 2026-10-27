@@ -13,7 +13,7 @@ struct LoneToRecipe: Identifiable {
 
     var note: String {
         guard let e = entries.first else { return "" }
-        return "Les \(entries.count) ingrédients \(e.repas.complement) de \(Days.longLabel(e.date).lowercased()) deviendront un seul plat de cette recette."
+        return "Les \(entries.count) ingrédients \(e.meal.complement) de \(Days.longLabel(e.date).lowercased()) deviendront un seul plat de cette recette."
     }
 
     /// « Enregistrer les 4 ingrédients comme recette », pour les menus.

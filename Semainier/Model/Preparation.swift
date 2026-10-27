@@ -16,7 +16,7 @@ struct Preparation: Identifiable {
 
     /// Plats prévus ces jours-là, préparables à l'avance (`batch`) ou non. Les ingrédients seuls et les repas libres
     /// n'en font pas partie. Sans ordre particulier.
-    static func plats(_ entries: [PlanEntry], days: Set<DayKey>, batch: Bool) -> [Preparation] {
+    static func dishes(_ entries: [PlanEntry], days: Set<DayKey>, batch: Bool) -> [Preparation] {
         var byRecipe: [PersistentIdentifier: Preparation] = [:]
         for e in entries where days.contains(e.date) {
             guard let r = e.recipe, r.batch == batch else { continue }
@@ -45,13 +45,13 @@ struct Preparation: Identifiable {
     }
 
     /// Plats à préparer à l'avance, du plus préparé au moins préparé (puis par nom), filtrés par `query`.
-    static func aPreparer(_ entries: [PlanEntry], days: Set<DayKey>, query: String = "") -> [Preparation] {
-        plats(entries, days: days, batch: true)
+    static func toPrepare(_ entries: [PlanEntry], days: Set<DayKey>, query: String = "") -> [Preparation] {
+        dishes(entries, days: days, batch: true)
             .filter { query.isEmpty || $0.recipe.name.localizedStandardContains(query) }
-            .sorted { plusPrepare($0, $1) }
+            .sorted { morePortionsFirst($0, $1) }
     }
 
-    private static func plusPrepare(_ a: Preparation, _ b: Preparation) -> Bool {
+    private static func morePortionsFirst(_ a: Preparation, _ b: Preparation) -> Bool {
         if a.total != b.total { return a.total > b.total }
         return a.recipe.name.localizedStandardCompare(b.recipe.name) == .orderedAscending
     }

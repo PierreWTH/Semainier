@@ -16,7 +16,7 @@ struct RecipeRows: View {
     @ScaledMetric(relativeTo: .subheadline) private var unitSize: CGFloat = 14
 
     var body: some View {
-        ForEach(recipes.filtres(query, nom: \.name)) { r in
+        ForEach(recipes.filtered(query, name: \.name)) { r in
             Button { edit(RecipeEditTarget(recipe: r)) } label: { card(r) }
                 .buttonStyle(.plain)
                 .listRowBackground(Color.clear)
@@ -27,20 +27,20 @@ struct RecipeRows: View {
 
     private func card(_ r: Recipe) -> some View {
         let t = r.totals
-        let shape = RoundedRectangle(cornerRadius: Arrondi.carteRecette)
+        let shape = RoundedRectangle(cornerRadius: Radius.recipeCard)
         return VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline) {
                 Text(r.name).font(.headline).multilineTextAlignment(.leading)
                 Spacer()
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(Fmt.n0(t.kcal)).police(.kcalRecette)
-                    Text(r.byPiece ? "kcal / pièce" : "kcal").font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+                    Text(Fmt.n0(t.kcal)).appFont(.recipeKcal)
+                    Text(r.byPiece ? "kcal / pièce" : "kcal").font(.system(size: unitSize)).foregroundStyle(Color.textSecondary)
                 }
                 .monospacedDigit()
             }
-            BarreRepartition(g: t.c, p: t.p, l: t.f, hauteur: 4)
+            SplitBar(g: t.c, p: t.p, l: t.f, height: 4)
             HStack {
-                MacroLine(m: t, unit: " g").foregroundStyle(Color.texte2)
+                MacroLine(m: t, unit: " g").foregroundStyle(Color.textSecondary)
                 Spacer()
                 Text(r.upcomingUses > 0 ? "\(r.upcomingUses)× ces 7 jours" : "pas planifiée").foregroundStyle(.secondary)
             }

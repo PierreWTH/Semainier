@@ -16,14 +16,14 @@ nonisolated enum Unit: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-nonisolated enum Rayon: String, Codable, CaseIterable, Identifiable {
-    case fruitsLegumes = "Fruits & légumes"
-    case viandesPoissons = "Viandes & poissons"
-    case cremerieOeufs = "Crèmerie & œufs"
-    case boulangerie = "Boulangerie"
-    case epicerie = "Épicerie"
-    case surgeles = "Surgelés"
-    case autre = "Autre"
+nonisolated enum Aisle: String, Codable, CaseIterable, Identifiable {
+    case produce = "Fruits & légumes"
+    case meatFish = "Viandes & poissons"
+    case dairyEggs = "Crèmerie & œufs"
+    case bakery = "Boulangerie"
+    case grocery = "Épicerie"
+    case frozen = "Surgelés"
+    case other = "Autre"
 
     var id: String { rawValue }
 }
@@ -60,25 +60,25 @@ nonisolated extension Sequence where Element == Macros {
 }
 
 /// Où en est un jour par rapport à l'objectif kcal.
-nonisolated enum EtatJour {
-    case dansLaCible, auDela, sousObjectif
+nonisolated enum DayStatus {
+    case withinTarget, aboveTarget, belowTarget
 
-    var libelle: String {
+    var label: String {
         switch self {
-        case .dansLaCible: "dans la cible"
-        case .auDela: "au-delà de l'objectif"
-        case .sousObjectif: "sous l'objectif"
+        case .withinTarget: "dans la cible"
+        case .aboveTarget: "au-delà de l'objectif"
+        case .belowTarget: "sous l'objectif"
         }
     }
 }
 
 /// Résumé d'une semaine : moyenne des jours remplis, et jours dans la cible.
-nonisolated struct StatsSemaine: Equatable {
+nonisolated struct WeekStats: Equatable {
     /// Moyenne des kcal des jours qui ont au moins un plat ; 0 si aucun.
-    var moyenne: Double
-    var dansLaCible: Int
+    var average: Double
+    var withinTarget: Int
     /// Aucun jour rempli.
-    var vide: Bool
+    var empty: Bool
 }
 
 nonisolated enum Nutrition {
@@ -117,26 +117,26 @@ nonisolated enum Nutrition {
     }
 
     /// Au-delà de +3 % de l'objectif, une valeur est en dépassement. Règle unique de l'appli (barres, chiffres, jours).
-    static let seuilDepassement = 1.03
+    static let overThreshold = 1.03
 
-    static func depasse(_ valeur: Double, objectif: Double) -> Bool {
-        objectif > 0 && valeur / objectif > seuilDepassement
+    static func exceeds(_ value: Double, target: Double) -> Bool {
+        target > 0 && value / target > overThreshold
     }
 
     /// |ratio − 1| ≤ 3 % : dans la cible ; au-delà de +3 % : au-delà ; sinon sous l'objectif (jour vide compris).
-    static func etatJour(kcal: Double, objectif: Double) -> EtatJour {
-        guard objectif > 0, kcal > 0 else { return .sousObjectif }
-        let ratio = kcal / objectif
-        if ratio > seuilDepassement { return .auDela }
-        return abs(ratio - 1) <= seuilDepassement - 1 ? .dansLaCible : .sousObjectif
+    static func dayStatus(kcal: Double, target: Double) -> DayStatus {
+        guard target > 0, kcal > 0 else { return .belowTarget }
+        let ratio = kcal / target
+        if ratio > overThreshold { return .aboveTarget }
+        return abs(ratio - 1) <= overThreshold - 1 ? .withinTarget : .belowTarget
     }
 
     /// Les jours vides ne comptent pas dans la moyenne.
-    static func statsSemaine(_ kcal: [Double], objectif: Double) -> StatsSemaine {
-        let remplis = kcal.filter { $0 > 0 }
-        return StatsSemaine(moyenne: remplis.isEmpty ? 0 : remplis.reduce(0, +) / Double(remplis.count),
-                            dansLaCible: kcal.filter { etatJour(kcal: $0, objectif: objectif) == .dansLaCible }.count,
-                            vide: remplis.isEmpty)
+    static func weekStats(_ kcal: [Double], target: Double) -> WeekStats {
+        let filled = kcal.filter { $0 > 0 }
+        return WeekStats(average: filled.isEmpty ? 0 : filled.reduce(0, +) / Double(filled.count),
+                            withinTarget: kcal.filter { dayStatus(kcal: $0, target: target) == .withinTarget }.count,
+                            empty: filled.isEmpty)
     }
 
     /// Somme des quantités par ingrédient (liste de courses).

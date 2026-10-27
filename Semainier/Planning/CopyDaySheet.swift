@@ -35,7 +35,7 @@ struct CopyDaySheet: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle("Copier le \(Days.longLabel(source).lowercased())")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -51,6 +51,6 @@ struct CopyDaySheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
     }
 }

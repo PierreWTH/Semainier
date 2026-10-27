@@ -4,8 +4,8 @@ import SwiftUI
 /// Une case du planning : un repas d'un jour.
 struct SlotRef: Identifiable, Hashable {
     var date: DayKey
-    var repas: Repas
-    var id: Int { date * 10 + repas.rawValue }
+    var meal: Meal
+    var id: Int { date * 10 + meal.rawValue }
 }
 
 struct PlanningView: View {
@@ -13,12 +13,12 @@ struct PlanningView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(Toast.self) private var toast
     /// Change au passage de minuit (voir `SuiviDuJour`) : relu ici pour redessiner les dates.
-    @Environment(\.aujourdhui) private var aujourdhui
+    @Environment(\.currentDay) private var currentDay
     @Query private var recipes: [Recipe]
     @Query private var ingredients: [Ingredient]
     // État local (animable) ; recopié dans les préférences pour s'en souvenir au prochain lancement.
     // Une écriture directe dans @AppStorage n'est pas animée.
-    @State private var mode = UserDefaults.standard.string(forKey: Prefs.modePlanning).flatMap(ModePlanning.init) ?? .semaine
+    @State private var mode = UserDefaults.standard.string(forKey: Prefs.planningMode).flatMap(PlanningMode.init) ?? .week
     /// Jour sélectionné (vue jour, pastille de la semaine).
     @State private var day = Days.today
     /// Semaine affichée dans la grille, par son premier jour, quand ce n'est pas celle d'aujourd'hui (`homeStart`).
@@ -43,7 +43,7 @@ struct PlanningView: View {
     private var weekDays: [DayKey] { Days.range(from: weekStart, count: 7) }
 
     /// Vue Semaine en vue d'ensemble (pincer, ou menu ⋯), retenue d'un lancement à l'autre.
-    @State private var overview = UserDefaults.standard.bool(forKey: Prefs.ensemble)
+    @State private var overview = UserDefaults.standard.bool(forKey: Prefs.overview)
 
     /// Vue Jour : semaine affichée dans le bandeau des jours (il défile sans changer de jour).
     @State private var stripWeek: DayKey?
@@ -61,8 +61,8 @@ struct PlanningView: View {
     /// Il apparaît quand aujourd'hui n'est pas à l'écran : autre jour choisi, colonne d'aujourd'hui sortie de la grille
     /// (ou autre semaine), ou autre semaine dans le bandeau de la vue Jour.
     private var awayFromToday: Bool {
-        day != Days.today || (mode != .jour && !todayOnScreen)
-            || (mode == .jour && stripWeek.map { $0 != homeStart } ?? false)
+        day != Days.today || (mode != .day && !todayOnScreen)
+            || (mode == .day && stripWeek.map { $0 != homeStart } ?? false)
     }
 
     private func backToToday() {
@@ -81,7 +81,7 @@ struct PlanningView: View {
 
     /// Rien à planifier tant qu'il n'y a ni recette ni ingrédient (ni plat, des repas libres seuls restant possibles).
     private var isEmpty: Bool {
-        recipes.isEmpty && ingredients.isEmpty && context.compter(FetchDescriptor<PlanEntry>()) == 0
+        recipes.isEmpty && ingredients.isEmpty && context.fetchCountOrLog(FetchDescriptor<PlanEntry>()) == 0
     }
 
     /// Début de la semaine (au sens du réglage) qui contient `d`.
@@ -119,17 +119,17 @@ struct PlanningView: View {
                 } else {
                     // Un seul défilement pour les deux vues : la bascule s'anime et le grand titre reste en place.
                     ScrollView {
-                        VStack(alignment: .leading, spacing: mode == .jour ? 16 : 12) {
+                        VStack(alignment: .leading, spacing: mode == .day ? 16 : 12) {
                             ModePicker(mode: $mode)
-                            if mode == .jour {
+                            if mode == .day {
                                 DayView(day: $day, stripWeek: $stripWeek, recenter: recenter, index: index, ns: dayNS,
-                                        add: { adding = SlotRef(date: day, repas: $0) },
+                                        add: { adding = SlotRef(date: day, meal: $0) },
                                         totalCardHidden: $dayCardHidden)
                                     .transition(.modeSwitch(.offset(y: 28)))
                             } else {
                                 WeekView(index: index, days: weekDays, selected: day,
-                                         openDay: { d in day = d; withAnimation(.modeSwitch) { mode = .jour } },
-                                         add: { adding = SlotRef(date: $0, repas: $1) },
+                                         openDay: { d in day = d; withAnimation(.modeSwitch) { mode = .day } },
+                                         add: { adding = SlotRef(date: $0, meal: $1) },
                                          shift: shiftWeek(forward:), recenter: recenter,
                                          todayVisible: { on in if todayOnScreen != on { todayOnScreen = on } },
                                          overview: $overview)
@@ -141,18 +141,18 @@ struct PlanningView: View {
                         .padding(.horizontal).padding(.bottom)
                         // Le titre maison de la barre a déjà sa marge, comme les grands titres système.
                         // Semaine : la page tient dans l'écran, c'est la grille qui défile (dans les deux sens).
-                        .frame(height: mode == .jour || visibleHeight == 0 ? nil : visibleHeight, alignment: .top)
+                        .frame(height: mode == .day || visibleHeight == 0 ? nil : visibleHeight, alignment: .top)
                     }
                     .scrollPosition($pagePosition)
-                    .scrollDisabled(mode != .jour)
+                    .scrollDisabled(mode != .day)
                     // Zone visible : déjà sans la barre du haut ni la barre d'onglets.
                     .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { _, h in visibleHeight = h }
                 }
             }
-            .background(Color.fond)
+            .background(Color.appBackground)
             .onChange(of: mode) {
-                UserDefaults.standard.set(mode.rawValue, forKey: Prefs.modePlanning)
-                if mode != .jour {
+                UserDefaults.standard.set(mode.rawValue, forKey: Prefs.planningMode)
+                if mode != .day {
                     pagePosition.scrollTo(edge: .top)
                     // Au retour en vue Jour, le bandeau repart de la semaine du jour affiché.
                     stripWeek = nil
@@ -161,13 +161,13 @@ struct PlanningView: View {
             }
             .onChange(of: day) { keepDayInWeek() }
             // Nouveau jour : la sélection suit si elle était sur « aujourd'hui » ; un autre jour choisi reste choisi.
-            .onChange(of: aujourdhui) { old, new in
+            .onChange(of: currentDay) { old, new in
                 if day == old { day = new } else { keepDayInWeek() }
             }
-            .onChange(of: overview) { UserDefaults.standard.set(overview, forKey: Prefs.ensemble) }
+            .onChange(of: overview) { UserDefaults.standard.set(overview, forKey: Prefs.overview) }
             // Réglage changé : la semaine repart de celle du jour choisi, avec le nouveau premier jour.
             .onChange(of: settings.weekFromMonday) { keepDayInWeek() }
-            .navigationTitle(isEmpty ? "Planning" : mode == .jour ? Days.weekday(day) : "Semaine")
+            .navigationTitle(isEmpty ? "Planning" : mode == .day ? Days.weekday(day) : "Semaine")
             .toolbar {
                 // Même en-tête pour Semaine et Jour (grand titre + précision à droite, sur la ligne de base) :
                 // seul le texte change à la bascule. Un changement de type de titre (grand ↔ compact avec
@@ -175,12 +175,12 @@ struct PlanningView: View {
                 if !isEmpty {
                     ToolbarItem(placement: .largeTitle) {
                         HStack(alignment: .firstTextBaseline) {
-                            Text(mode == .jour ? Days.weekday(day) : "Semaine").font(.largeTitle.bold())
+                            Text(mode == .day ? Days.weekday(day) : "Semaine").font(.largeTitle.bold())
                                 .contentTransition(.opacity)
                             Spacer(minLength: 8)
-                            Text(mode == .jour ? daySubtitle
+                            Text(mode == .day ? daySubtitle
                                  : Days.shortRangeText(weekStart, Days.adding(6, to: weekStart)))
-                                .font(.system(size: 15)).foregroundStyle(Color.texte2)
+                                .font(.system(size: 15)).foregroundStyle(Color.textSecondary)
                                 .monospacedDigit()
                                 .contentTransition(.opacity)
                         }
@@ -201,14 +201,14 @@ struct PlanningView: View {
             }
             // Jour : rien tant que la carte total est visible, puis le total du jour. Semaine : pas de bulle,
             // l'objectif est dans la ligne de moyenne.
-            .appChrome(dayTotals: mode == .jour && !isEmpty && dayCardHidden
+            .appChrome(dayTotals: mode == .day && !isEmpty && dayCardHidden
                        ? index.totals(on: day) : nil) {
-                if mode != .jour && !isEmpty {
+                if mode != .day && !isEmpty {
                     // Même bascule que le pincement, pour qui ne le connaît pas (et pour VoiceOver).
                     Button(overview ? "Vue détaillée" : "Vue d'ensemble",
                            systemImage: overview ? "rectangle.split.3x1" : "square.grid.3x3") { overview.toggle() }
                 }
-                if mode == .jour && !isEmpty {
+                if mode == .day && !isEmpty {
                     Button("Copier ce jour vers…", systemImage: "doc.on.doc") { copying = true }
                         .disabled(dayEmpty)
                     Button("Vider ce jour", systemImage: "trash", role: .destructive) { confirmClear = true }
@@ -264,12 +264,12 @@ extension AnyTransition {
 
 /// Bascule Semaine / Jour, en tête des deux vues.
 struct ModePicker: View {
-    @Binding var mode: ModePlanning
+    @Binding var mode: PlanningMode
 
     var body: some View {
         Picker("Vue", selection: $mode.animation(.modeSwitch)) {
-            Text("Semaine").tag(ModePlanning.semaine)
-            Text("Jour").tag(ModePlanning.jour)
+            Text("Semaine").tag(PlanningMode.week)
+            Text("Jour").tag(PlanningMode.day)
         }
         .pickerStyle(.segmented)
     }

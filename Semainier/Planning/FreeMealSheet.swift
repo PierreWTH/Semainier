@@ -43,15 +43,15 @@ struct FreeMealSheet: View {
 
                     Section {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("≈").font(.system(size: unitSize, weight: .semibold)).foregroundStyle(Color.libre)
+                            Text("≈").font(.system(size: unitSize, weight: .semibold)).foregroundStyle(Color.freeMeal)
                             TextField("0", text: $kcalText)
                                 .keyboardType(.numberPad)
                                 .focused($kcalFocused)
                                 .font(.system(size: valueSize, weight: .bold, design: .rounded)).monospacedDigit()
-                            Text("kcal").font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+                            Text("kcal").font(.system(size: unitSize)).foregroundStyle(Color.textSecondary)
                         }
                         .padding(.horizontal, 10).padding(.vertical, 4)
-                        .overlay(RoundedRectangle(cornerRadius: Arrondi.pastille)
+                        .overlay(RoundedRectangle(cornerRadius: Radius.chip)
                             .strokeBorder(kcalFocused ? Color.accentColor : .clear, lineWidth: 2))
                         .listRowInsets(EdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10))
 
@@ -64,9 +64,9 @@ struct FreeMealSheet: View {
                                         .monospacedDigit()
                                         .lineLimit(1).minimumScaleFactor(0.8)
                                         .frame(maxWidth: .infinity, minHeight: 36)
-                                        .foregroundStyle(on ? Color.surAccent : Color.accentColor)
-                                        .background(on ? Color.accentColor : Color.accentDoux,
-                                                    in: .rect(cornerRadius: Arrondi.pastille))
+                                        .foregroundStyle(on ? Color.onAccent : Color.accentColor)
+                                        .background(on ? Color.accentColor : Color.accentSoft,
+                                                    in: .rect(cornerRadius: Radius.chip))
                                         .contentShape(.rect)
                                 }
                                 .buttonStyle(.plain)
@@ -83,9 +83,9 @@ struct FreeMealSheet: View {
 
                     Section {
                         DisclosureGroup("Préciser les macros", isExpanded: $showsMacros.animation(.snappy)) {
-                            NumberField(label: "Glucides (g)", text: $c, color: Color.glucTexte)
-                            NumberField(label: "Protéines (g)", text: $p, color: Color.protTexte)
-                            NumberField(label: "Lipides (g)", text: $f, color: Color.lipTexte)
+                            NumberField(label: "Glucides (g)", text: $c, color: Color.carbsText)
+                            NumberField(label: "Protéines (g)", text: $p, color: Color.proteinText)
+                            NumberField(label: "Lipides (g)", text: $f, color: Color.fatText)
                         }
                     } footer: {
                         if showsMacros, let hint = macrosHint { Text(hint) }
@@ -93,7 +93,7 @@ struct FreeMealSheet: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle(FreeMeal.defaultName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -108,7 +108,7 @@ struct FreeMealSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
         .onAppear {
             if let initial {
                 name = initial.name == FreeMeal.defaultName ? "" : initial.name

@@ -17,13 +17,13 @@ struct WeekGrid: UIViewRepresentable {
     /// Change quand une hauteur de ligne peut changer (plats, groupes dépliés, taille de texte) : on remesure.
     var layoutKey: Int
     /// Empreinte du contenu d'une case : seules les cases dont elle a changé sont remesurées.
-    var cellKey: (_ day: DayKey, _ repas: Repas) -> Int
+    var cellKey: (_ day: DayKey, _ meal: Meal) -> Int
     /// Change quand il faut revenir sur le jour choisi (bouton du jour) sans que les jours changent.
     var recenter: Int
     var header: (DayKey) -> AnyView
-    var band: (DayKey, Repas) -> AnyView
+    var band: (DayKey, Meal) -> AnyView
     /// `measuring` : version à sa hauteur idéale (pour calculer la hauteur de la ligne), sans étirement.
-    var cell: (_ day: DayKey, _ repas: Repas, _ measuring: Bool) -> AnyView
+    var cell: (_ day: DayKey, _ meal: Meal, _ measuring: Bool) -> AnyView
     var footer: AnyView
     /// Passer à la semaine voisine : `true` la suivante, `false` la précédente.
     var shift: (_ forward: Bool) -> Void
@@ -34,7 +34,7 @@ struct WeekGrid: UIViewRepresentable {
     /// Case survolée pendant le glisser (nil en dehors).
     var hover: (SlotRef?) -> Void
     /// Dépôt sur une case.
-    var drop: (_ day: DayKey, _ repas: Repas) -> Void
+    var drop: (_ day: DayKey, _ meal: Meal) -> Void
     /// Tirer au-delà du bord vers la semaine voisine (nil hors de ce geste).
     var pull: (WeekPull?) -> Void = { _ in }
     /// Avancée du tirer, image par image : lue par la seule pastille, pour ne pas recalculer la vue Semaine.
@@ -80,7 +80,7 @@ struct WeekGrid: UIViewRepresentable {
     }
 
     /// Lignes de la grille : une par repas (item = jour × `rows` + repas).
-    static let rows = Repas.allCases.count
+    static let rows = Meal.allCases.count
 
     /// Dépassement du bord (dans le rebond, qui résiste de plus en plus) au-delà duquel le lâcher change de semaine :
     /// environ 150 pt de doigt. Un défilement lancé finit dans le rebond sans jamais compter : seul le doigt
@@ -132,7 +132,7 @@ struct WeekGrid: UIViewRepresentable {
                 layout.bandHeight = new.bandHeight
                 // Mesurer une case coûte cher (une vue SwiftUI complète) : seules les cases changées le sont,
                 // sinon chaque ajout remesurait toute la fenêtre de jours (près de 2 s sur un planning chargé).
-                layout.rowHeights = Repas.allCases.map { r in new.days.map { height(new, $0, r) }.max() ?? 0 }
+                layout.rowHeights = Meal.allCases.map { r in new.days.map { height(new, $0, r) }.max() ?? 0 }
                 if footerFor != [new.width, new.headerHeight] {
                     layout.footerHeight = fittingHeight(new.footer, width: max(new.width, 300))
                     footerFor = [new.width, new.headerHeight]
@@ -200,11 +200,11 @@ struct WeekGrid: UIViewRepresentable {
             cv.setContentOffset(CGPoint(x: min(x, maxOffsetX(cv)), y: cv.contentOffset.y), animated: true)
         }
 
-        private func height(_ g: WeekGrid, _ day: DayKey, _ repas: Repas) -> CGFloat {
-            let ref = SlotRef(date: day, repas: repas)
-            let key = g.cellKey(day, repas)
+        private func height(_ g: WeekGrid, _ day: DayKey, _ meal: Meal) -> CGFloat {
+            let ref = SlotRef(date: day, meal: meal)
+            let key = g.cellKey(day, meal)
             if let c = Self.heights[g.colWidth]?[ref], c.key == key { return c.height }
-            let h = measure(g, day, repas)
+            let h = measure(g, day, meal)
             Self.heights[g.colWidth, default: [:]][ref] = (key, h)
             return h
         }
@@ -235,8 +235,8 @@ struct WeekGrid: UIViewRepresentable {
         }
 
         /// Hauteur idéale d'une case, à la largeur de sa colonne (texte sur plusieurs lignes compris).
-        private func measure(_ g: WeekGrid, _ day: DayKey, _ repas: Repas) -> CGFloat {
-            fittingHeight(g.cell(day, repas, true), width: g.colWidth)
+        private func measure(_ g: WeekGrid, _ day: DayKey, _ meal: Meal) -> CGFloat {
+            fittingHeight(g.cell(day, meal, true), width: g.colWidth)
         }
 
         /// Mesure UIKit des cellules qui s'adaptent à leur contenu : largeur imposée, hauteur au plus juste.
@@ -269,8 +269,8 @@ struct WeekGrid: UIViewRepresentable {
         private func configure(_ c: UICollectionViewCell, item: Int) {
             guard let g = parent, item / WeekGrid.rows < g.days.count else { return }
             c.clipsToBounds = true
-            let repas = Repas(slot: item % WeekGrid.rows)
-            c.contentConfiguration = UIHostingConfiguration { g.cell(g.days[item / WeekGrid.rows], repas, false) }.margins(.all, 0)
+            let meal = Meal(slot: item % WeekGrid.rows)
+            c.contentConfiguration = UIHostingConfiguration { g.cell(g.days[item / WeekGrid.rows], meal, false) }.margins(.all, 0)
         }
 
         private func configure(_ v: UICollectionViewCell, kind: String, item: Int) {
@@ -279,7 +279,7 @@ struct WeekGrid: UIViewRepresentable {
             switch kind {
             case Kind.header where item < g.days.count: content = g.header(g.days[item])
             case Kind.band where item / WeekGrid.rows < g.days.count:
-                content = g.band(g.days[item / WeekGrid.rows], Repas(slot: item % WeekGrid.rows))
+                content = g.band(g.days[item / WeekGrid.rows], Meal(slot: item % WeekGrid.rows))
             case Kind.footer: content = g.footer
             default: content = AnyView(EmptyView())
             }
@@ -309,7 +309,7 @@ struct WeekGrid: UIViewRepresentable {
         private func slot(at session: UIDropSession) -> SlotRef? {
             guard let cv = collectionView, let layout, let g = parent,
                   let (day, slot) = layout.slot(at: session.location(in: cv)), day < g.days.count else { return nil }
-            return SlotRef(date: g.days[day], repas: Repas(slot: slot))
+            return SlotRef(date: g.days[day], meal: Meal(slot: slot))
         }
 
         private func setHover(_ ref: SlotRef?) {
@@ -334,7 +334,7 @@ struct WeekGrid: UIViewRepresentable {
         func dropInteraction(_ i: UIDropInteraction, performDrop session: UIDropSession) {
             let ref = slot(at: session)
             setHover(nil)
-            if let ref { parent?.drop(ref.date, ref.repas) }
+            if let ref { parent?.drop(ref.date, ref.meal) }
         }
 
         // MARK: Pincer pour changer de niveau
@@ -503,7 +503,7 @@ final class WeekGridLayout: UICollectionViewLayout {
     private var needsRebuild = true
 
     override func invalidateLayout(with context: UICollectionViewLayoutInvalidationContext) {
-        if !(context is DefilementContext) { needsRebuild = true }
+        if !(context is ScrollContext) { needsRebuild = true }
         super.invalidateLayout(with: context)
     }
 
@@ -607,7 +607,7 @@ final class WeekGridLayout: UICollectionViewLayout {
 
     /// Défilement : seuls l'en-tête des jours et le texte d'aide sont invalidés.
     override func invalidationContext(forBoundsChange newBounds: CGRect) -> UICollectionViewLayoutInvalidationContext {
-        let c = DefilementContext()
+        let c = ScrollContext()
         c.invalidateSupplementaryElements(ofKind: WeekGrid.Kind.header,
                                           at: (0..<dayCount).map { IndexPath(item: $0, section: 0) })
         if footerHeight > 0 {
@@ -617,7 +617,7 @@ final class WeekGridLayout: UICollectionViewLayout {
     }
 
     /// Invalidation due au seul défilement (voir `needsRebuild`).
-    private final class DefilementContext: UICollectionViewLayoutInvalidationContext {}
+    private final class ScrollContext: UICollectionViewLayoutInvalidationContext {}
 }
 
 /// Filet de 1 pt entre les jours et sous chaque repas.

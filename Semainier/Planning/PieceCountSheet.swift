@@ -23,12 +23,12 @@ struct PieceCountSheet: View {
                     } footer: {
                         let m = recipe.totals * Double(count)
                         Text("\(Fmt.n0(m.kcal)) kcal · \(MacroLine.text(m, unit: " g"))")
-                            .font(.subheadline).foregroundStyle(Color.texte2)
+                            .font(.subheadline).foregroundStyle(Color.textSecondary)
                     }
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle(recipe.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -42,7 +42,7 @@ struct PieceCountSheet: View {
             }
         }
         .presentationDetents([.height(330)])
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
         .onAppear { count = max(1, initial ?? 1) }
     }
 }
@@ -65,7 +65,7 @@ struct PieceStepper: View {
                         .font(.system(size: valueSize, weight: .bold, design: .rounded)).monospacedDigit()
                         .contentTransition(.numericText(value: Double(count)))
                     Text(count > 1 ? "pièces" : "pièce")
-                        .font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+                        .font(.system(size: unitSize)).foregroundStyle(Color.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .combine)
@@ -81,9 +81,9 @@ struct PieceStepper: View {
                             .font(.system(.subheadline, design: .rounded).weight(.semibold))
                             .monospacedDigit()
                             .frame(maxWidth: .infinity, minHeight: 36)
-                            .foregroundStyle(on ? Color.surAccent : Color.accentColor)
-                            .background(on ? Color.accentColor : Color.accentDoux,
-                                        in: .rect(cornerRadius: Arrondi.pastille))
+                            .foregroundStyle(on ? Color.onAccent : Color.accentColor)
+                            .background(on ? Color.accentColor : Color.accentSoft,
+                                        in: .rect(cornerRadius: Radius.chip))
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
@@ -101,7 +101,7 @@ struct PieceStepper: View {
             Image(systemName: icon)
                 .font(.title3.weight(.semibold))
                 .frame(width: stepSize, height: stepSize)
-                .background(Color.accentDoux, in: .circle)
+                .background(Color.accentSoft, in: .circle)
                 .contentShape(.circle)
         }
         .foregroundStyle(Color.accentColor)

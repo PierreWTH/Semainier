@@ -8,8 +8,8 @@ struct IngredientRows: View {
     @Query private var ingredients: [Ingredient]
 
     var body: some View {
-        ForEach(Ingredient.parRayon(ingredients, query: query), id: \.rayon) { rayon, items in
-            Section(rayon.rawValue) {
+        ForEach(Ingredient.byAisle(ingredients, query: query), id: \.aisle) { aisle, items in
+            Section(aisle.rawValue) {
                 ForEach(items) { i in
                     Button { edit(IngredientEditTarget(ingredient: i)) } label: { IngredientRow(ingredient: i) }
                         .buttonStyle(.plain)
@@ -40,13 +40,13 @@ struct IngredientRow: View {
                             .accessibilityLabel("Scanné")
                     }
                 }
-                Text("\(i.unit.per) · \(Fmt.n0(i.kcal)) kcal · \(MacroLine.letter(.glucides)) \(Fmt.n1(i.c)) · \(MacroLine.letter(.proteines)) \(Fmt.n1(i.p)) · \(MacroLine.letter(.lipides)) \(Fmt.n1(i.f))")
+                Text("\(i.unit.per) · \(Fmt.n0(i.kcal)) kcal · \(MacroLine.letter(.carbs)) \(Fmt.n1(i.c)) · \(MacroLine.letter(.protein)) \(Fmt.n1(i.p)) · \(MacroLine.letter(.fat)) \(Fmt.n1(i.f))")
                     .font(.footnote).foregroundStyle(.secondary).monospacedDigit()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if i.kcalLooksOff {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: warningSize)).foregroundStyle(Color.attention)
+                    .font(.system(size: warningSize)).foregroundStyle(Color.warning)
                     .accessibilityLabel("Kcal incohérentes avec les macros")
             }
         }

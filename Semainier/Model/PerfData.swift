@@ -8,25 +8,25 @@ enum PerfData {
     static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("-PerfData") }
 
     static func insert(into context: ModelContext, today: DayKey = Days.today) {
-        let specs: [(String, Unit, Double, Double, Double, Double, Rayon)] = [
-            ("Flocons d'avoine", .g, 372, 13, 59, 7, .epicerie),
-            ("Lait demi-écrémé", .ml, 46, 3.3, 4.8, 1.6, .cremerieOeufs),
-            ("Whey", .g, 380, 78, 6, 5, .epicerie),
-            ("Banane", .g, 90, 1.1, 20, 0.3, .fruitsLegumes),
-            ("Skyr", .g, 64, 11, 4, 0.2, .cremerieOeufs),
-            ("Riz basmati", .g, 350, 8, 77, 1, .epicerie),
-            ("Blanc de poulet", .g, 110, 23, 0, 1.5, .viandesPoissons),
-            ("Brocoli", .g, 34, 2.8, 4, 0.4, .fruitsLegumes),
-            ("Pâtes", .g, 357, 12, 71, 1.5, .epicerie),
-            ("Bœuf haché 5 %", .g, 125, 21, 0, 5, .viandesPoissons),
-            ("Sauce tomate", .g, 45, 1.5, 7, 1, .epicerie),
-            ("Œuf", .pc, 75, 6.5, 0.5, 5, .cremerieOeufs),
-            ("Pain complet", .g, 240, 9, 41, 3, .boulangerie),
-            ("Saumon", .g, 200, 20, 0, 13, .viandesPoissons),
-            ("Huile d'olive", .ml, 820, 0, 0, 91, .epicerie),
+        let specs: [(String, Unit, Double, Double, Double, Double, Aisle)] = [
+            ("Flocons d'avoine", .g, 372, 13, 59, 7, .grocery),
+            ("Lait demi-écrémé", .ml, 46, 3.3, 4.8, 1.6, .dairyEggs),
+            ("Whey", .g, 380, 78, 6, 5, .grocery),
+            ("Banane", .g, 90, 1.1, 20, 0.3, .produce),
+            ("Skyr", .g, 64, 11, 4, 0.2, .dairyEggs),
+            ("Riz basmati", .g, 350, 8, 77, 1, .grocery),
+            ("Blanc de poulet", .g, 110, 23, 0, 1.5, .meatFish),
+            ("Brocoli", .g, 34, 2.8, 4, 0.4, .produce),
+            ("Pâtes", .g, 357, 12, 71, 1.5, .grocery),
+            ("Bœuf haché 5 %", .g, 125, 21, 0, 5, .meatFish),
+            ("Sauce tomate", .g, 45, 1.5, 7, 1, .grocery),
+            ("Œuf", .pc, 75, 6.5, 0.5, 5, .dairyEggs),
+            ("Pain complet", .g, 240, 9, 41, 3, .bakery),
+            ("Saumon", .g, 200, 20, 0, 13, .meatFish),
+            ("Huile d'olive", .ml, 820, 0, 0, 91, .grocery),
         ]
         let ings = specs.map { s in
-            let i = Ingredient(name: s.0, unit: s.1, kcal: s.2, p: s.3, c: s.4, f: s.5, rayon: s.6)
+            let i = Ingredient(name: s.0, unit: s.1, kcal: s.2, p: s.3, c: s.4, f: s.5, aisle: s.6)
             context.insert(i)
             return i
         }

@@ -7,7 +7,7 @@ enum UITestData {
     static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("-UITestData") }
 
     static func insert(into context: ModelContext) {
-        let skyr = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, rayon: .cremerieOeufs)
+        let skyr = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, aisle: .dairyEggs)
         context.insert(skyr)
         let r = Recipe(name: "Skyr test")
         context.insert(r)

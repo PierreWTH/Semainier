@@ -8,12 +8,12 @@ struct MacroLine: View {
     var body: some View { Self.text(m, unit: unit) }
 
     static func text(_ m: Macros, unit: String = "") -> Text {
-        Text("\(letter(.glucides)) \(Fmt.n0(m.c)) · \(letter(.proteines)) \(Fmt.n0(m.p)) · \(letter(.lipides)) \(Fmt.n0(m.f))\(unit)")
+        Text("\(letter(.carbs)) \(Fmt.n0(m.c)) · \(letter(.protein)) \(Fmt.n0(m.p)) · \(letter(.fat)) \(Fmt.n0(m.f))\(unit)")
             .monospacedDigit()
     }
 
     static func letter(_ macro: Macro) -> Text {
-        Text(macro.lettre).bold().foregroundStyle(macro.texte)
+        Text(macro.letter).bold().foregroundStyle(macro.textColor)
     }
 }
 
@@ -23,7 +23,7 @@ struct IngredientMacros: View {
 
     var body: some View {
         Text("\(Fmt.n0(m.kcal)) kcal · \(MacroLine.text(m, unit: " g"))")
-            .font(.footnote).foregroundStyle(Color.texte2)
+            .font(.footnote).foregroundStyle(Color.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -48,7 +48,7 @@ struct QuantityChip: View {
         .foregroundStyle(Color.accentColor)
         .padding(.horizontal, 10)
         .frame(minWidth: 54, minHeight: 28)
-        .background(Color.accentDoux, in: .rect(cornerRadius: 8))
+        .background(Color.accentSoft, in: .rect(cornerRadius: 8))
     }
 
     /// Le nombre en Semibold, l'unité (« g », « pièces ») en Regular.
@@ -75,7 +75,7 @@ struct QuantityParts {
 }
 
 /// Cercle de sélection : contour 1,5 pt `texte3`, ou accent plein avec une coche.
-struct CercleCoche: View {
+struct CheckCircle: View {
     var on: Bool
     var size: CGFloat = 24
     @ScaledMetric private var scale: CGFloat = 1
@@ -86,9 +86,9 @@ struct CercleCoche: View {
                 Circle().fill(Color.accentColor)
                 Image(systemName: "checkmark")
                     .font(.system(size: size * scale * 0.5, weight: .bold))
-                    .foregroundStyle(Color.surAccent)
+                    .foregroundStyle(Color.onAccent)
             } else {
-                Circle().strokeBorder(Color.texte3, lineWidth: 1.5)
+                Circle().strokeBorder(Color.textTertiary, lineWidth: 1.5)
             }
         }
         .frame(width: size * scale, height: size * scale)
@@ -108,32 +108,32 @@ struct MacroBars: View {
     var body: some View {
         let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
         layout {
-            bar(.glucides, totals.c, targets.c)
-            bar(.proteines, totals.p, targets.p)
-            bar(.lipides, totals.f, targets.f)
+            bar(.carbs, totals.c, targets.c)
+            bar(.protein, totals.p, targets.p)
+            bar(.fat, totals.f, targets.f)
         }
     }
 
     private func bar(_ macro: Macro, _ v: Double, _ t: Double) -> some View {
-        let over = Seuil.depasse(v, objectif: t)
+        let over = Threshold.exceeds(v, target: t)
         return VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(macro.lettre).font(.system(size: letterSize, weight: .bold)).foregroundStyle(macro.texte)
-                Text(Fmt.n0(v)).police(.valeurMacroCarte)
-                    .foregroundStyle(over ? Color.depassement : v > 0 ? Color.texte : Color.texte3)
+                Text(macro.letter).font(.system(size: letterSize, weight: .bold)).foregroundStyle(macro.textColor)
+                Text(Fmt.n0(v)).appFont(.cardMacroValue)
+                    .foregroundStyle(over ? Color.overTarget : v > 0 ? Color.textPrimary : Color.textTertiary)
                     .contentTransition(.numericText(value: v))
-                Text("/ \(Fmt.n0(t)) g").font(.system(size: unitSize)).foregroundStyle(Color.texte2)
+                Text("/ \(Fmt.n0(t)) g").font(.system(size: unitSize)).foregroundStyle(Color.textSecondary)
             }
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .monospacedDigit()
-            BarreObjectif(valeur: v, objectif: t, couleur: macro.trait, piste: .pisteCarteTotal, hauteur: 4)
+            TargetBar(value: v, target: t, color: macro.barColor, track: .totalCardTrack, height: 4)
                 .animation(.snappy, value: v)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         // Le libellé visible n'est plus qu'une lettre : VoiceOver lit le nom complet.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(macro.libelle) \(Fmt.n0(v)) sur \(Fmt.n0(t)) grammes")
+        .accessibilityLabel("\(macro.label) \(Fmt.n0(v)) sur \(Fmt.n0(t)) grammes")
         .accessibilityValue(over ? "objectif dépassé" : "")
     }
 }

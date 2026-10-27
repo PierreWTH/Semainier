@@ -22,7 +22,7 @@ struct SettingsSheet: View {
                 }
                 .listRowBackground(Color.surface)
             }
-            .fondEcran()
+            .screenBackground()
             .navigationTitle("Réglages")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -32,6 +32,6 @@ struct SettingsSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .presentationBackground(Color.fond)
+        .presentationBackground(Color.appBackground)
     }
 }

@@ -78,7 +78,7 @@ struct FmtTests {
 /// Fiche Open Food Facts écrite en dictionnaire, passée par le JSON comme une vraie réponse.
 private func parseOFF(_ product: [String: Any]) -> ScannedProduct {
     let data = try! JSONSerialization.data(withJSONObject: product)
-    return OpenFoodFacts.parse(try! JSONDecoder().decode(OpenFoodFacts.Produit.self, from: data))
+    return OpenFoodFacts.parse(try! JSONDecoder().decode(OpenFoodFacts.Product.self, from: data))
 }
 
 struct OpenFoodFactsTests {
@@ -94,14 +94,14 @@ struct OpenFoodFactsTests {
         #expect(p.unit == .g)
         #expect(p.kcal == 64)
         #expect(p.c == 4)
-        #expect(p.rayon == .cremerieOeufs)
+        #expect(p.aisle == .dairyEggs)
     }
 
     @Test func kcalFromKJAndLiquid() {
         let p = parseOFF(["product_name": "Jus", "quantity": "1 L", "nutriments": ["energy_100g": 184.1]])
         #expect(p.unit == .ml)
         #expect(p.kcal == 44)
-        #expect(p.rayon == .epicerie)
+        #expect(p.aisle == .grocery)
     }
 }
 
@@ -199,15 +199,15 @@ struct KcalCheckTests {
 
 struct OverTests {
     @Test func overAfterThreePercent() {
-        #expect(!Nutrition.depasse(277, objectif: 273))   // +1,5 % : toléré
-        #expect(!Nutrition.depasse(281, objectif: 273))   // +2,9 %
-        #expect(Nutrition.depasse(282, objectif: 273))    // +3,3 %
-        #expect(!Nutrition.depasse(50, objectif: 0))
-        #expect(Nutrition.etatJour(kcal: 2650, objectif: 2600) == .dansLaCible)   // +1,9 %
-        #expect(Nutrition.etatJour(kcal: 2530, objectif: 2600) == .dansLaCible)   // −2,7 %
-        #expect(Nutrition.etatJour(kcal: 2700, objectif: 2600) == .auDela)        // +3,8 %
-        #expect(Nutrition.etatJour(kcal: 2400, objectif: 2600) == .sousObjectif)
-        #expect(Nutrition.etatJour(kcal: 0, objectif: 2600) == .sousObjectif)
+        #expect(!Nutrition.exceeds(277, target: 273))   // +1,5 % : toléré
+        #expect(!Nutrition.exceeds(281, target: 273))   // +2,9 %
+        #expect(Nutrition.exceeds(282, target: 273))    // +3,3 %
+        #expect(!Nutrition.exceeds(50, target: 0))
+        #expect(Nutrition.dayStatus(kcal: 2650, target: 2600) == .withinTarget)   // +1,9 %
+        #expect(Nutrition.dayStatus(kcal: 2530, target: 2600) == .withinTarget)   // −2,7 %
+        #expect(Nutrition.dayStatus(kcal: 2700, target: 2600) == .aboveTarget)        // +3,8 %
+        #expect(Nutrition.dayStatus(kcal: 2400, target: 2600) == .belowTarget)
+        #expect(Nutrition.dayStatus(kcal: 0, target: 2600) == .belowTarget)
     }
 }
 

@@ -10,7 +10,7 @@ nonisolated struct ScannedProduct {
     var p: Double?
     var c: Double?
     var f: Double?
-    var rayon: Rayon
+    var aisle: Aisle
     /// Rempli quand les kcal de la fiche ont été écartées car incohérentes.
     var kcalNote: String?
     /// Poids d'une pièce déduit de la contenance (« 300 g », « 4 x 125 g »).
@@ -21,18 +21,18 @@ nonisolated enum OpenFoodFacts {
     enum LookupError: Error { case network }
 
     /// Fiche produit telle que la renvoie l'API (champs demandés seulement).
-    struct Produit: Decodable {
+    struct Product: Decodable {
         var code: String?
         var product_name: String?
         var product_name_fr: String?
         var brands: String?
         var quantity: String?
         var categories_tags: [String]?
-        var nutriments: [String: Nombre]?
+        var nutriments: [String: NumberValue]?
     }
 
     /// Valeur nutritionnelle : nombre, ou texte (« 4 », « 12,5 ») selon les fiches. Nil si illisible.
-    struct Nombre: Decodable {
+    struct NumberValue: Decodable {
         var value: Double?
 
         init(from decoder: Decoder) throws {
@@ -41,21 +41,21 @@ nonisolated enum OpenFoodFacts {
         }
     }
 
-    private struct Reponse: Decodable { var status: Int?; var product: Produit? }
-    private struct Resultats: Decodable { var products: [Produit]? }
+    private struct LookupResponse: Decodable { var status: Int?; var product: Product? }
+    private struct SearchResults: Decodable { var products: [Product]? }
 
-    private static let champs = "code,product_name,product_name_fr,brands,nutriments,quantity,categories_tags"
+    private static let fields = "code,product_name,product_name_fr,brands,nutriments,quantity,categories_tags"
 
     /// Requête vers Open Food Facts, qui demande un User-Agent identifiant l'appli.
-    private static func requete(_ path: String, _ query: [URLQueryItem], timeout: TimeInterval) -> URLRequest {
+    private static func request(_ path: String, _ query: [URLQueryItem], timeout: TimeInterval) -> URLRequest {
         var comps = URLComponents(string: "https://world.openfoodfacts.org" + path)!
-        comps.queryItems = query + [URLQueryItem(name: "fields", value: champs)]
+        comps.queryItems = query + [URLQueryItem(name: "fields", value: fields)]
         var req = URLRequest(url: comps.url!, timeoutInterval: timeout)
         req.setValue("Semainier/1.0 (iOS, usage personnel)", forHTTPHeaderField: "User-Agent")
         return req
     }
 
-    private static func charger(_ req: URLRequest) async throws -> (Data, URLResponse) {
+    private static func load(_ req: URLRequest) async throws -> (Data, URLResponse) {
         do {
             return try await URLSession.shared.data(for: req)
         } catch {
@@ -66,10 +66,10 @@ nonisolated enum OpenFoodFacts {
 
     /// Nil si le produit est inconnu. Lève `.network` si la requête échoue.
     static func lookup(_ code: String) async throws -> ScannedProduct? {
-        let (data, response) = try await charger(requete("/api/v2/product/\(code).json", [], timeout: 12))
+        let (data, response) = try await load(request("/api/v2/product/\(code).json", [], timeout: 12))
         if let http = response as? HTTPURLResponse, http.statusCode == 404 { return nil }
         do {
-            let r = try JSONDecoder().decode(Reponse.self, from: data)
+            let r = try JSONDecoder().decode(LookupResponse.self, from: data)
             guard r.status == 1, let product = r.product else { return nil }
             return parse(product)
         } catch {
@@ -81,7 +81,7 @@ nonisolated enum OpenFoodFacts {
     /// Produits proches (même nom / marque), vendus en France, les plus scannés d'abord.
     /// Sans doublons : deux produits aux valeurs identiques ne comptent qu'une fois.
     static func search(_ terms: String, excluding code: String? = nil) async throws -> [ScannedProduct] {
-        let (data, _) = try await charger(requete("/cgi/search.pl", [
+        let (data, _) = try await load(request("/cgi/search.pl", [
             URLQueryItem(name: "search_terms", value: terms),
             URLQueryItem(name: "search_simple", value: "1"),
             URLQueryItem(name: "json", value: "1"),
@@ -91,9 +91,9 @@ nonisolated enum OpenFoodFacts {
             URLQueryItem(name: "tag_contains_0", value: "contains"),
             URLQueryItem(name: "tag_0", value: "france"),
         ], timeout: 15))
-        let products: [Produit]
+        let products: [Product]
         do {
-            products = try JSONDecoder().decode(Resultats.self, from: data).products ?? []
+            products = try JSONDecoder().decode(SearchResults.self, from: data).products ?? []
         } catch {
             Journal.scan.error("Résultats de recherche illisibles : \(error.localizedDescription, privacy: .public)")
             return []
@@ -109,7 +109,7 @@ nonisolated enum OpenFoodFacts {
         }
     }
 
-    static func parse(_ product: Produit) -> ScannedProduct {
+    static func parse(_ product: Product) -> ScannedProduct {
         let n = product.nutriments ?? [:]
         func num(_ key: String) -> Double? { n[key]?.value }
         let p = num("proteins_100g"), c = num("carbohydrates_100g"), f = num("fat_100g")
@@ -142,7 +142,7 @@ nonisolated enum OpenFoodFacts {
             p: p,
             c: c,
             f: f,
-            rayon: rayon(for: product.categories_tags ?? []),
+            aisle: aisle(for: product.categories_tags ?? []),
             kcalNote: kcalNote,
             pieceWeight: pieceWeight(from: quantity)
         )
@@ -152,7 +152,7 @@ nonisolated enum OpenFoodFacts {
     /// « 33 cl » → 330, « 1,5 L » → 1500. Nil si illisible.
     static func pieceWeight(from quantity: String) -> Double? {
         let q = quantity.lowercased().replacingOccurrences(of: ",", with: ".")
-        guard let m = q.firstMatch(of: contenance),
+        guard let m = q.firstMatch(of: packageSize),
               let value = m.output[2].substring.flatMap({ Double($0) }),
               let unit = m.output[3].substring.map(String.init) else { return nil }
         let factor: Double = ["kg": 1000, "g": 1, "mg": 0.001, "l": 1000, "dl": 100, "cl": 10, "ml": 1][unit] ?? 1
@@ -161,17 +161,17 @@ nonisolated enum OpenFoodFacts {
     }
 
     /// « 4 x 125 g » : nombre de pièces (facultatif), valeur, unité. Compilée une seule fois.
-    private static let contenance = try! Regex(#"(?:(\d+)\s*[x×]\s*)?(\d+(?:\.\d+)?)\s*(kg|g|mg|cl|ml|dl|l)\b"#)
+    private static let packageSize = try! Regex(#"(?:(\d+)\s*[x×]\s*)?(\d+(?:\.\d+)?)\s*(kg|g|mg|cl|ml|dl|l)\b"#)
 
     /// Devine le rayon à partir des catégories Open Food Facts.
-    static func rayon(for tags: [String]) -> Rayon {
+    static func aisle(for tags: [String]) -> Aisle {
         let t = Set(tags)
         func any(_ keys: [String]) -> Bool { keys.contains { t.contains("en:" + $0) } }
-        if any(["frozen-foods"]) { return .surgeles }
-        if any(["dairies", "cheeses", "yogurts", "eggs", "milks", "butters", "creams"]) { return .cremerieOeufs }
-        if any(["meats", "poultries", "fishes", "seafood", "hams", "sausages"]) { return .viandesPoissons }
-        if any(["breads", "viennoiseries", "pastries"]) { return .boulangerie }
-        if any(["fresh-fruits", "fresh-vegetables", "fruits", "vegetables"]) && !any(["canned-foods"]) { return .fruitsLegumes }
-        return .epicerie
+        if any(["frozen-foods"]) { return .frozen }
+        if any(["dairies", "cheeses", "yogurts", "eggs", "milks", "butters", "creams"]) { return .dairyEggs }
+        if any(["meats", "poultries", "fishes", "seafood", "hams", "sausages"]) { return .meatFish }
+        if any(["breads", "viennoiseries", "pastries"]) { return .bakery }
+        if any(["fresh-fruits", "fresh-vegetables", "fruits", "vegetables"]) && !any(["canned-foods"]) { return .produce }
+        return .grocery
     }
 }

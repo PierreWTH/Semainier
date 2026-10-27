@@ -14,14 +14,14 @@ struct PlanEntryTests {
     }
 
     private func skyr() -> Ingredient {
-        let i = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, rayon: .cremerieOeufs)
+        let i = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, aisle: .dairyEggs)
         context.insert(i)
         return i
     }
 
     @Test func ingredientEntryTotalsAndShopping() {
         let i = skyr()
-        PlanActions.add(i, qty: 250, date: 20261014, slot: .collation, in: context)
+        PlanActions.add(i, qty: 250, date: 20261014, slot: .snack, in: context)
         let e = try! context.fetch(FetchDescriptor<PlanEntry>()).first!
         #expect(e.title == "Skyr")
         #expect(e.totals.kcal == 160)                   // kcal de l'étiquette : 250 g × 64 / 100
@@ -31,7 +31,7 @@ struct PlanEntryTests {
 
     @Test func copyDayKeepsIngredientEntries() throws {
         let i = skyr()
-        PlanActions.add(i, qty: 150, date: 20261012, slot: .collation, in: context)
+        PlanActions.add(i, qty: 150, date: 20261012, slot: .snack, in: context)
         PlanActions.copy(day: 20261012, to: [20261015], in: context)
         let copied = try context.fetch(FetchDescriptor<PlanEntry>()).filter { $0.date == 20261015 }
         #expect(copied.count == 1)
@@ -40,7 +40,7 @@ struct PlanEntryTests {
 
     @Test func deletingIngredientRemovesItFromPlan() throws {
         let i = skyr()
-        PlanActions.add(i, qty: 100, date: 20261013, slot: .petitDejeuner, in: context)
+        PlanActions.add(i, qty: 100, date: 20261013, slot: .breakfast, in: context)
         try context.save()
         PlanActions.delete(i, settings: PlanActions.settings(in: context), in: context)
         try context.save()
@@ -49,7 +49,7 @@ struct PlanEntryTests {
 
     @Test func backupRoundTripWithIngredientEntry() throws {
         let i = skyr()
-        PlanActions.add(i, qty: 200, date: 20261016, slot: .diner, in: context)
+        PlanActions.add(i, qty: 200, date: 20261016, slot: .dinner, in: context)
         try context.save()
         let data = try JSONEncoder().encode(Backup.make(from: context))
         let backup = try JSONDecoder().decode(Backup.self, from: data)
@@ -63,10 +63,10 @@ struct PlanEntryTests {
 
     @Test func loneIngredientsBecomeOneRecipeDish() throws {
         let i = skyr()
-        let other = Ingredient(name: "Banane", unit: .g, kcal: 90, p: 1, c: 20, f: 0.3, rayon: .fruitsLegumes)
+        let other = Ingredient(name: "Banane", unit: .g, kcal: 90, p: 1, c: 20, f: 0.3, aisle: .produce)
         context.insert(other)
-        PlanActions.add(i, qty: 150, date: 20261020, slot: .petitDejeuner, in: context)
-        PlanActions.add(other, qty: 120, date: 20261020, slot: .petitDejeuner, in: context)
+        PlanActions.add(i, qty: 150, date: 20261020, slot: .breakfast, in: context)
+        PlanActions.add(other, qty: 120, date: 20261020, slot: .breakfast, in: context)
         let lone = try context.fetch(FetchDescriptor<PlanEntry>()).sorted { $0.order < $1.order }
         lone[1].x = 2
         let kcalBefore = lone.map(\.totals).sum.kcal
@@ -96,7 +96,7 @@ struct PlanEntryTests {
         let item = RecipeItem(ingredient: i, qty: 100, order: 0)
         context.insert(item)
         item.recipe = r
-        PlanActions.add(r, x: 2, date: 20261021, slot: .diner, in: context)
+        PlanActions.add(r, x: 2, date: 20261021, slot: .dinner, in: context)
         let e = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
         #expect(e.totals.kcal == 128)                   // 2 × 64
         #expect(e.shoppingLines.first?.qty == 200)
@@ -110,7 +110,7 @@ struct PlanEntryTests {
     }
 
     @Test func freeMealCountsKcalButNotShopping() throws {
-        PlanActions.add(FreeMeal(name: "Pizza", kcal: 1200), date: 20261017, slot: .diner, in: context)
+        PlanActions.add(FreeMeal(name: "Pizza", kcal: 1200), date: 20261017, slot: .dinner, in: context)
         let e = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
         #expect(e.isValid && e.isFree)
         #expect(e.title == "Pizza")
@@ -121,9 +121,9 @@ struct PlanEntryTests {
 
     @Test func freeMealCopyAndBackupKeepValues() throws {
         let meal = FreeMeal(name: "Burger", kcal: 950, p: 40, c: 80, f: 50)
-        PlanActions.add(meal, date: 20261018, slot: .dejeuner, in: context)
+        PlanActions.add(meal, date: 20261018, slot: .lunch, in: context)
         let e = try #require(try context.fetch(FetchDescriptor<PlanEntry>()).first)
-        PlanActions.duplicate(e, date: 20261019, slot: .diner, in: context)
+        PlanActions.duplicate(e, date: 20261019, slot: .dinner, in: context)
         try context.save()
 
         let data = try JSONEncoder().encode(Backup.make(from: context))
@@ -148,12 +148,12 @@ struct OverrideTests {
 
     /// Recette « Riz poulet » : 100 g de riz (350 kcal/100 g) + 150 g de poulet (110 kcal/100 g).
     private func setup() -> (PlanEntry, RecipeItem, Recipe) {
-        let riz = Ingredient(name: "Riz", unit: .g, kcal: 350, p: 7, c: 78, f: 1, rayon: .epicerie)
-        let poulet = Ingredient(name: "Poulet", unit: .g, kcal: 110, p: 23, c: 0, f: 2, rayon: .viandesPoissons)
+        let rice = Ingredient(name: "Riz", unit: .g, kcal: 350, p: 7, c: 78, f: 1, aisle: .grocery)
+        let chicken = Ingredient(name: "Poulet", unit: .g, kcal: 110, p: 23, c: 0, f: 2, aisle: .meatFish)
         let r = Recipe(name: "Riz poulet")
-        [riz, poulet].forEach(context.insert)
+        [rice, chicken].forEach(context.insert)
         context.insert(r)
-        let a = RecipeItem(ingredient: riz, qty: 100, order: 0), b = RecipeItem(ingredient: poulet, qty: 150, order: 1)
+        let a = RecipeItem(ingredient: rice, qty: 100, order: 0), b = RecipeItem(ingredient: chicken, qty: 150, order: 1)
         [a, b].forEach { context.insert($0); $0.recipe = r }
         let e = PlanEntry(date: 20261014, slot: 1, recipe: r)
         context.insert(e)
@@ -161,42 +161,42 @@ struct OverrideTests {
     }
 
     @Test func overrideChangesOnlyThisDish() {
-        let (e, riz, r) = setup()
+        let (e, rice, r) = setup()
         #expect(e.totals.kcal == 515)                   // riz 350 + poulet 165
-        e.setQty(150, for: riz)
-        #expect(e.isOverridden(riz))
+        e.setQty(150, for: rice)
+        #expect(e.isOverridden(rice))
         #expect(e.totals.kcal == 690)                   // 525 + 165
         #expect(r.totals.kcal == 515)                   // la recette n'a pas changé
         #expect(e.shoppingLines.first { $0.ingredient.name == "Riz" }?.qty == 150)
     }
 
     @Test func overrideIsPerPortion() {
-        let (e, riz, _) = setup()
+        let (e, rice, _) = setup()
         e.x = 2
-        e.setQty(300, for: riz)                  // quantité affichée, portion comprise
-        #expect(e.qty(for: riz) == 150)
+        e.setQty(300, for: rice)                  // quantité affichée, portion comprise
+        #expect(e.qty(for: rice) == 150)
         #expect(e.shoppingLines.first { $0.ingredient.name == "Riz" }?.qty == 300)
     }
 
     @Test func sameQtyOrResetClearsOverride() {
-        let (e, riz, _) = setup()
-        e.setQty(120, for: riz)
-        e.setQty(100, for: riz)
-        #expect(!e.isOverridden(riz))
-        e.setQty(120, for: riz)
-        e.resetQty(for: riz)
+        let (e, rice, _) = setup()
+        e.setQty(120, for: rice)
+        e.setQty(100, for: rice)
+        #expect(!e.isOverridden(rice))
+        e.setQty(120, for: rice)
+        e.resetQty(for: rice)
         #expect(e.overrides.isEmpty)
     }
 
     @Test func copyKeepsOverrides() {
-        let (e, riz, _) = setup()
-        e.setQty(150, for: riz)
-        #expect(e.copy(to: 4)?.qty(for: riz) == 150)
+        let (e, rice, _) = setup()
+        e.setQty(150, for: rice)
+        #expect(e.copy(to: 4)?.qty(for: rice) == 150)
     }
 
     @Test func backupKeepsOverrides() throws {
-        let (e, riz, _) = setup()
-        e.setQty(150, for: riz)
+        let (e, rice, _) = setup()
+        e.setQty(150, for: rice)
         try context.save()
         let data = try JSONEncoder().encode(Backup.make(from: context))
         try JSONDecoder().decode(Backup.self, from: data).restore(into: context)
@@ -229,17 +229,17 @@ struct MoveTests {
         let context = ModelContext(try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true)))
         let r = Recipe(name: "Skyr")
         context.insert(r)
-        PlanActions.add(r, date: 20261016, slot: .collation, in: context)   // déjà un plat le vendredi
-        PlanActions.add(r, date: 20261015, slot: .collation, in: context)
+        PlanActions.add(r, date: 20261016, slot: .snack, in: context)   // déjà un plat le vendredi
+        PlanActions.add(r, date: 20261015, slot: .snack, in: context)
         let thursday = try context.fetch(FetchDescriptor<PlanEntry>()).first { $0.date == 20261015 }!
-        PlanActions.move(thursday, date: 20261016, slot: .collation, in: context)
+        PlanActions.move(thursday, date: 20261016, slot: .snack, in: context)
         #expect(thursday.date == 20261016 && thursday.slot == 2 && thursday.order == 1)
     }
 
     @Test func duplicateKeepsOriginalAndCopiesOverrides() throws {
         let schema = Schema([Ingredient.self, Recipe.self, RecipeItem.self, PlanEntry.self, AppSettings.self])
         let context = ModelContext(try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true)))
-        let skyr = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, rayon: .cremerieOeufs)
+        let skyr = Ingredient(name: "Skyr", unit: .g, kcal: 64, p: 11, c: 4, f: 0.2, aisle: .dairyEggs)
         let r = Recipe(name: "Bol")
         context.insert(skyr); context.insert(r)
         let it = RecipeItem(ingredient: skyr, qty: 200, order: 0)
@@ -247,7 +247,7 @@ struct MoveTests {
         let e = PlanEntry(date: 20261015, slot: 0, recipe: r, x: 1.5)
         context.insert(e)
         e.setQty(450, for: it)                       // 300 g par portion
-        PlanActions.duplicate(e, date: 20261016, slot: .petitDejeuner, in: context)
+        PlanActions.duplicate(e, date: 20261016, slot: .breakfast, in: context)
         let all = try context.fetch(FetchDescriptor<PlanEntry>())
         #expect(all.count == 2)
         let copy = all.first { $0.date == 20261016 }!
@@ -290,13 +290,13 @@ struct DatedMigrationTests {
 struct MacroKcalTests {
     @Test func plannedKcalComeFromLabel() {
         // Le planning compte les kcal de l'étiquette ; une fiche incohérente est signalée.
-        let stMoret = Ingredient(name: "St Moret", unit: .g, kcal: 765, p: 10, c: 5, f: 8, rayon: .cremerieOeufs)
+        let stMoret = Ingredient(name: "St Moret", unit: .g, kcal: 765, p: 10, c: 5, f: 8, aisle: .dairyEggs)
         #expect(stMoret.macros(qty: 100).kcal == 765)
         #expect(stMoret.kcalLooksOff)
     }
 
     @Test func missingLabelKcalFallsBackToMacros() {
-        let i = Ingredient(name: "Sans kcal", unit: .g, kcal: 0, p: 10, c: 5, f: 8, rayon: .autre)
+        let i = Ingredient(name: "Sans kcal", unit: .g, kcal: 0, p: 10, c: 5, f: 8, aisle: .other)
         #expect(i.macros(qty: 100).kcal == 132)
     }
 

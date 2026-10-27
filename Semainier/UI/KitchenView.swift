@@ -4,8 +4,8 @@ import SwiftUI
 /// Onglet Cuisine : les plats (recettes), les ingrédients, et « À préparer » (portions à cuisiner pour les jours
 /// choisis, pour le batch cooking). Une seule liste pour les trois côtés : à la bascule, seul son contenu change,
 /// le grand titre reste en place.
-struct CuisineView: View {
-    @AppStorage(Prefs.modeCuisine) private var mode = ModeCuisine.plats
+struct KitchenView: View {
+    @AppStorage(Prefs.kitchenMode) private var mode = KitchenMode.dishes
     @Query private var recipes: [Recipe]
     @Query private var ingredients: [Ingredient]
     @State private var query = ""
@@ -14,7 +14,7 @@ struct CuisineView: View {
     @State private var scanning = false
 
     private var showsIngredients: Bool { mode == .ingredients }
-    private var showsPrep: Bool { mode == .preparer }
+    private var showsPrep: Bool { mode == .prep }
 
     var body: some View {
         NavigationStack {
@@ -48,7 +48,7 @@ struct CuisineView: View {
     private var list: some View {
             List {
                 Section {
-                    CuisinePicker(mode: $mode)
+                    KitchenPicker(mode: $mode)
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
                 } footer: {
@@ -79,7 +79,7 @@ struct CuisineView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .fondEcran()
+            .screenBackground()
     }
 
     @ViewBuilder
@@ -107,14 +107,14 @@ struct CuisineView: View {
 }
 
 /// « Plats | Ingrédients | À préparer » : change de vue.
-struct CuisinePicker: View {
-    @Binding var mode: ModeCuisine
+struct KitchenPicker: View {
+    @Binding var mode: KitchenMode
 
     var body: some View {
         Picker("Afficher", selection: $mode.animation(.snappy)) {
-            Text("Plats").tag(ModeCuisine.plats)
-            Text("Ingrédients").tag(ModeCuisine.ingredients)
-            Text("À préparer").tag(ModeCuisine.preparer)
+            Text("Plats").tag(KitchenMode.dishes)
+            Text("Ingrédients").tag(KitchenMode.ingredients)
+            Text("À préparer").tag(KitchenMode.prep)
         }
         .pickerStyle(.segmented)
     }

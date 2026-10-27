@@ -21,8 +21,8 @@ struct PlanIndex {
     }
 
     /// Plats valides d'une case, dans l'ordre.
-    func entries(on day: DayKey, repas: Repas) -> [PlanEntry] {
-        (byDay[day] ?? []).filter { $0.repas == repas && $0.isValid }.sorted { $0.order < $1.order }
+    func entries(on day: DayKey, meal: Meal) -> [PlanEntry] {
+        (byDay[day] ?? []).filter { $0.meal == meal && $0.isValid }.sorted { $0.order < $1.order }
     }
 
     func isEmpty(_ day: DayKey) -> Bool { byDay[day]?.isEmpty ?? true }
@@ -32,7 +32,7 @@ struct PlanIndex {
     func entry(uid: String) -> PlanEntry? { all.first { $0.uid == uid } }
 
     /// Moyenne et jours dans la cible sur `days`.
-    func stats(_ days: [DayKey], objectif: Double) -> StatsSemaine {
-        Nutrition.statsSemaine(days.map { totals(on: $0).kcal }, objectif: objectif)
+    func stats(_ days: [DayKey], target: Double) -> WeekStats {
+        Nutrition.weekStats(days.map { totals(on: $0).kcal }, target: target)
     }
 }

@@ -12,7 +12,7 @@ nonisolated enum SchemaV1: VersionedSchema {
     }
 }
 
-nonisolated enum PlanDeMigration: SchemaMigrationPlan {
+nonisolated enum AppMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] { [SchemaV1.self] }
     static var stages: [MigrationStage] { [] }
 }
