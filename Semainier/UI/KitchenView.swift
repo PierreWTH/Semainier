@@ -84,11 +84,12 @@ struct KitchenView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if showsIngredients && ingredients.isEmpty {
+        // Pendant une recherche, la bibliothèque d'aliments bruts peut répondre même sans ingrédient enregistré.
+        if showsIngredients && ingredients.isEmpty && query.isEmpty {
             ContentUnavailableView {
                 Label("Aucun ingrédient", systemImage: "leaf")
             } description: {
-                Text("Scanner un produit, ou créer un ingrédient à la main. On peut aussi en créer depuis une recette.")
+                Text("Rechercher un aliment brut (riz, poulet, pomme…), scanner un produit, ou créer un ingrédient à la main.")
             } actions: {
                 Button("Scanner un produit", systemImage: "barcode.viewfinder") { scanning = true }
                     .buttonStyle(.glassProminent)

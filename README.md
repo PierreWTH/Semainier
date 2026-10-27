@@ -22,6 +22,8 @@ Application iPhone de planification de repas et macros pour mon usage personnel.
 - **Courses** : quantités totales par rayon pour les jours choisis, arrondies pour le magasin, à cocher, copier ou
   partager.
 - **Cuisine** : recettes, ingrédients, et « À préparer » (portions à cuisiner à l'avance pour les jours choisis).
+- **Bibliothèque d'aliments bruts** : 324 aliments de la table [Ciqual](https://ciqual.anses.fr) de l'Anses (crus, sans
+  marque, % de matière grasse connu), proposés dans la recherche d'ingrédients et ajoutés d'un toucher.
 - **Scan de codes-barres** (VisionKit) avec fiche préremplie depuis [Open Food Facts](https://world.openfoodfacts.org) :
   kcal vérifiées contre les kJ et les macros, rayon et poids d'une pièce devinés.
 - **Sauvegarde JSON** : export et import depuis le menu ⋯ (AirDrop, Fichiers).
@@ -69,6 +71,9 @@ xcodebuild -project Semainier.xcodeproj -scheme Semainier \
 
 # Captures du simulateur par écran
 scripts/shots.sh <dossier> planning:semaine planning:jour courses recettes ingredients
+
+# Regénérer la bibliothèque d'aliments bruts (Python 3, sans dépendance ; ~70 Mo téléchargés la première fois)
+scripts/ciqual.py
 ```
 
 Arguments de lancement (builds Debug) :
@@ -92,6 +97,7 @@ Les bases de test sont toujours en mémoire : elles ne touchent jamais aux vraie
 | `Semainier/Shopping/` | Liste de courses |
 | `Semainier/Recipes/`, `Semainier/Ingredients/` | Onglet Cuisine : recettes, ingrédients, « À préparer » |
 | `Semainier/Scan/` | Caméra VisionKit, client Open Food Facts, enchaînement scan → fiche |
+| `Semainier/Resources/` | `ciqual.json`, la bibliothèque d'aliments bruts générée par `scripts/ciqual.py` |
 | `Semainier/UI/` | Thème (couleurs, typographie, rayons), composants, préférences, barre d'outils commune |
 
 Conventions du projet (tokens de couleur, nommage en français, schéma versionné, journalisation des erreurs…) :
@@ -104,6 +110,11 @@ suffit d'ajouter la capacité iCloud (CloudKit) à la cible et de remplacer `clo
 dans `SemainierApp.swift` pour synchroniser entre appareils.
 
 ## Crédits
+
+Aliments bruts : Anses. 2025. Table de composition nutritionnelle des aliments
+[Ciqual](https://ciqual.anses.fr), sous licence [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.fr).
+Semainier n'en garde qu'une sélection d'aliments bruts, avec des noms simplifiés et les variétés proches regroupées
+(voir `scripts/ciqual.py`).
 
 Données produits : [Open Food Facts](https://world.openfoodfacts.org), sous licence
 [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/).

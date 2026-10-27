@@ -83,6 +83,16 @@ struct IngredientDraft {
         pieceWeight = s.pieceWeight.map(Fmt.input) ?? ""
     }
 
+    /// Aliment de la bibliothèque Ciqual : valeurs pour 100 g.
+    init(food a: RawFood) {
+        name = a.name
+        kcal = Fmt.input(a.kcal)
+        p = Fmt.input(a.p)
+        c = Fmt.input(a.c)
+        f = Fmt.input(a.f)
+        aisle = a.aisle
+    }
+
     var macros: (p: Double, c: Double, f: Double) {
         (Fmt.parse(p) ?? 0, Fmt.parse(c) ?? 0, Fmt.parse(f) ?? 0)
     }
@@ -111,6 +121,8 @@ struct IngredientEditTarget: Identifiable {
     var draft: IngredientDraft?
     var note: String?
     var scan: ScanContext?
+    /// Icône de `note` : le code-barres pour un scan, une feuille pour la bibliothèque.
+    var noteIcon = "barcode.viewfinder"
 }
 
 struct IngredientEditor: View {
@@ -137,7 +149,7 @@ struct IngredientEditor: View {
             Form {
                 Group {
                     if let note = target.note {
-                        Section { Label(note, systemImage: "barcode.viewfinder").font(.subheadline) }
+                        Section { Label(note, systemImage: target.noteIcon).font(.subheadline) }
                     }
                     if let scan = target.scan, target.ingredient == nil {
                         scanSection(scan)

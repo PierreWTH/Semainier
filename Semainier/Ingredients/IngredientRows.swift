@@ -16,6 +16,7 @@ struct IngredientRows: View {
                 }
             }
         }
+        FoodLibraryRows(query: query, existingNames: ingredients.map(\.name)) { edit(.library($0)) }
     }
 
     /// « retiré de 2 recettes et du planning »
@@ -40,8 +41,7 @@ struct IngredientRow: View {
                             .accessibilityLabel("Scanné")
                     }
                 }
-                Text("\(i.unit.per) · \(Fmt.n0(i.kcal)) kcal · \(MacroLine.letter(.carbs)) \(Fmt.n1(i.c)) · \(MacroLine.letter(.protein)) \(Fmt.n1(i.p)) · \(MacroLine.letter(.fat)) \(Fmt.n1(i.f))")
-                    .font(.footnote).foregroundStyle(.secondary).monospacedDigit()
+                Self.valuesText(i.unit, kcal: i.kcal, c: i.c, p: i.p, f: i.f)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if i.kcalLooksOff {
@@ -54,4 +54,10 @@ struct IngredientRow: View {
     }
 
     @ScaledMetric(relativeTo: .body) private var warningSize: CGFloat = 20
+
+    /// « pour 100 g · 350 kcal · G 77,5 · P 7 · L 0,8 », sous le nom.
+    static func valuesText(_ unit: Unit, kcal: Double, c: Double, p: Double, f: Double) -> some View {
+        Text("\(unit.per) · \(Fmt.n0(kcal)) kcal · \(MacroLine.letter(.carbs)) \(Fmt.n1(c)) · \(MacroLine.letter(.protein)) \(Fmt.n1(p)) · \(MacroLine.letter(.fat)) \(Fmt.n1(f))")
+            .font(.footnote).foregroundStyle(.secondary).monospacedDigit()
+    }
 }

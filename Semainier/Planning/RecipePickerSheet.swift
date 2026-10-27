@@ -237,6 +237,9 @@ struct RecipePickerSheet: View {
                 Text(aisle.rawValue).font(.headline).foregroundStyle(.primary).textCase(nil)
             }
         }
+        FoodLibraryRows(query: query, existingNames: ingredients.map(\.name), boldHeader: true) {
+            creatingIngredient = .library($0)
+        }
     }
 
     /// Ligne choisie : teintée accent à 8 %.

@@ -23,6 +23,7 @@ struct IngredientPicker: View {
                             }
                         }
                     }
+                    FoodLibraryRows(query: query, existingNames: ingredients.map(\.name)) { creating = .library($0) }
                 }
                 .listRowBackground(Color.surface)
             }
